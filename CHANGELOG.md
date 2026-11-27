@@ -2,6 +2,15 @@
 
 All notable changes to Studio Agent are documented here.
 
+## [1.6.2] - 2026-11-28
+
+### Fixed
+- **`stall.detected` no longer floods the console while the tab is in the
+  background.** Chrome throttles hidden-tab timers to ~1Hz, so every parked tick
+  looked like a 1s stall and buried the real diagnostics (observed live during a
+  90s OpenHands Canvas runtime boot - 60 identical lines). The watchdog now logs
+  foreground stalls only; `park.resumed` already reports the hidden stretch.
+
 ## [1.6.1] - 2026-11-28
 
 ### Fixed

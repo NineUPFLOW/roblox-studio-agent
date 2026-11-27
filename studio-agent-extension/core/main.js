@@ -71,7 +71,12 @@
       const now = Date.now();
       const gap = now - _lastTick;
       _lastTick = now;
-      if (gap > STALL) {
+      // Only log FOREGROUND stalls. Chrome throttles a hidden tab's timers to
+      // ~1Hz, so every tick "looks like" a 1000ms stall while the tab is in the
+      // background (the waitOnTurn park does that deliberately) - that is the
+      // timer budget, not a main-thread block, and it buried real stalls in
+      // one-per-second spam for a 90s OpenHands boot.
+      if (gap > STALL && !document.hidden) {
         diag("stall.detected", { ms: gap, overBy: gap - EXPECT,
           toolRunning: A.toolRunning, running: A.running, injecting: A.injecting });
       }
