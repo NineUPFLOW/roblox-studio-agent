@@ -53,6 +53,23 @@
       n.textContent = JSON.stringify(_diag);
     } catch {}
     try { window.__zsDiag = _diag; } catch {}
+    // Manual escape hatch for a blacked-out chat: __zsUnmask() in DevTools
+    // removes every class/overlay this extension can hide content with, WITHOUT
+    // a page reload. If the chat comes back, the blanking was ours; if it stays
+    // gone, the site itself failed to render. Reload restores normal behaviour.
+    try {
+      window.__zsUnmask = () => {
+        let n = 0;
+        document.querySelectorAll(".zs-hidden, .zs-tool-hide, .zs-cmd-mask, .zs-cmd-mask-all, .zs-typing").forEach((e) => {
+          e.classList.remove("zs-hidden", "zs-tool-hide", "zs-cmd-mask", "zs-cmd-mask-all", "zs-typing");
+          n++;
+        });
+        const c = document.getElementById("zs-input-cover");
+        if (c) c.remove();
+        console.log("[studio-agent] unmasked", n, "node(s) + cover. Reload the page to restore camouflage.");
+        return n;
+      };
+    } catch {}
   }
   P.init({ diag });
 
@@ -1956,6 +1973,34 @@
     delete item.__zsChip;
   }
 
+  // ── Camouflage fuse ───────────────────────────────────────────────────────
+  // Every hide above is meant to be PER TURN. But if a site restructure makes a
+  // turn root swallow its neighbours (or a provider mis-selects a shared
+  // container), the blanket `.zs-hidden` rule blanks the whole conversation -
+  // reported live on OpenHands Canvas as "the chat disappeared / black screen"
+  // minutes after a send. Rather than ship a dead-looking page, trip a fuse:
+  // when at least HALF of all turns are hidden by our classes (and there are 4+
+  // turns), strip every trace of camouflage for this page load and say so. Raw
+  // injected turns become visible - cosmetic, recoverable, and far cheaper than
+  // a chat that looks destroyed.
+  let camoFused = false;
+  function camoFuse() {
+    if (camoFused) return;
+    try {
+      const items = P.allItems();
+      if (items.length < 4) return;
+      let hidden = 0;
+      for (const it of items) {
+        if (it.classList.contains("zs-hidden") || it.classList.contains("zs-cmd-mask")) hidden++;
+      }
+      if (hidden * 2 < items.length) return;
+      camoFused = true;
+      for (const it of items) resetDecoration(it);
+      diag("camo.fused", { hidden, total: items.length });
+      ui.toast("Camouflage disabled this load - too many turns were hidden at once.");
+    } catch {}
+  }
+
   const decorate = {
     // Core renderer. opts: {label, detail, body, category, phase, cls, whole}
     chip(item, opts) {
@@ -1996,7 +2041,7 @@
       if (whole) {
         // Fully injected turn (result / sys) → hide the whole item.
         if (chip.parentElement !== item) item.insertBefore(chip, item.firstChild);
-        item.classList.add("zs-hidden");
+        if (!camoFused) item.classList.add("zs-hidden");
       } else {
         item.classList.remove("zs-hidden");
         // findToolBlockSpot ALSO applies the .zs-tool-hide classes (its real job);
@@ -4144,6 +4189,7 @@
       P.enforceComposer();  // keep the composer in the provider's required modes
       ui.updateStartGate(); // block the input until a session is started
       decorate.sweep();
+      camoFuse();           // global escape: never leave the chat half-blank
     };
     if (document.hidden) setTimeout(run, 100);
     else requestAnimationFrame(run);
@@ -4157,6 +4203,7 @@
   // so the class lands before that first paint; the full sweep still runs after
   // to build the actual chip.
   function preHideWholeItems() {
+    if (camoFused) return;
     const items = P.allItems();
     // Optimistic pre-hide of a freshly injected result turn (armed in
     // submitAndGetBase). The text-based match below can only fire once the

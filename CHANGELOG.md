@@ -2,6 +2,21 @@
 
 All notable changes to Studio Agent are documented here.
 
+## [1.6.4] - 2026-11-28
+
+### Added
+- **Camouflage fuse.** The whole-turn hide (`.zs-hidden`) is per-turn by design,
+  but if a site restructure ever lets one hidden root swallow the rest of the
+  conversation, the chat looks black/gone. The sweep now checks every pass: when
+  half or more of all visible turns carry our hide classes, camouflage is dropped
+  site-wide for that page load (`camo.fused` in the diag, a toast on screen) -
+  raw injected text becomes visible, the chat never goes blank.
+- **`__zsUnmask()`** in the browser console removes every class and overlay the
+  extension hides content with, without a reload. Use it the moment the chat
+  disappears: if content returns, the blanking is ours (and the log shows
+  which turn triggered it); if the page stays empty, the site failed to render
+  on its own.
+
 ## [1.6.3] - 2026-11-28
 
 ### Fixed
