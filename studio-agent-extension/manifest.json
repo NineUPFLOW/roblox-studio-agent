@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Studio Agent — Roblox Studio AI agent",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "Turn ChatGPT, DeepSeek, Gemini, Kimi, GLM, Qwen, Arena, Meta AI or OpenHands Canvas into a Roblox Studio agent that drives Studio through a local bridge.",
   "permissions": ["storage"],
   "host_permissions": [

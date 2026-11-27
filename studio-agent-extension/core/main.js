@@ -4366,5 +4366,30 @@
     }
   }, 5000);
 
+  // Self-heal when this script boots onto DOM a PREVIOUS copy left behind (the
+  // back/forward cache restores a page with our nodes still in it, and re-running
+  // the content script does not clear old classes). What a dead copy can strand:
+  // the composer cover, the .zs-typing editor mask, and .zs-hidden on OUR OWN
+  // injected user turns - if those are left hidden while the loop that normally
+  // re-evaluates them was killed, the chat looks empty (reported as a "black
+  // screen" after an in-place extension update). Drop them at startup; the very
+  // first preHide/sweep pass re-hides whatever STILL qualifies, so a genuine
+  // injected turn is never exposed. Agent turns keep their masks untouched -
+  // their .zs-tool-hide hides are per-block and harmless, and stripping them
+  // would flash old raw commands.
+  try {
+    let stranded = 0;
+    for (const it of P.allItems()) {
+      if (P.isUserItem && P.isUserItem(it) && it.classList.contains("zs-hidden")) {
+        it.classList.remove("zs-hidden");
+        stranded++;
+      }
+    }
+    document.querySelectorAll(".zs-typing").forEach((e) => e.classList.remove("zs-typing"));
+    const cov = document.getElementById("zs-input-cover");
+    if (cov) cov.remove();
+    if (stranded) diag("startup.uncamouflage", { userBubbles: stranded });
+  } catch {}
+
   log(`Studio Agent content script ready (provider: ${P.id})`);
 })();

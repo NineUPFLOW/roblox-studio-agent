@@ -2,6 +2,18 @@
 
 All notable changes to Studio Agent are documented here.
 
+## [1.6.3] - 2026-11-28
+
+### Fixed
+- **A page restored onto a dead script copy no longer stays camouflaged.**
+  Updating or reloading the extension while a chat tab is open kills the old
+  content script, and classes it had already applied (the composer cover, the
+  typing mask, `.zs-hidden` on our own injected user turns) could outlive it -
+  with nothing left to re-evaluate them, the conversation could look empty or
+  "black". The script now clears exactly those strands at startup (logged as
+  `startup.uncamouflage`); the first sweep re-hides anything that still
+  qualifies, so raw prompts stay invisible anyway.
+
 ## [1.6.2] - 2026-11-28
 
 ### Fixed
