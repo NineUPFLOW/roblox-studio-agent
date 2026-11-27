@@ -74,7 +74,7 @@ def _enable_ansi_colors():
 HOST = "127.0.0.1"
 # Keep in sync with studio-agent-extension/manifest.json "version" - printed at
 # startup so a user's terminal output alone tells us which build they're on.
-BRIDGE_VERSION = "1.6.0"
+BRIDGE_VERSION = "1.6.1"
 PORT = int(os.environ.get("ZS_BRIDGE_PORT", "17613"))
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -2037,5 +2037,17 @@ if __name__ == "__main__":
         log("shutting down...", "yl")
         for c in mgr.clients.values():
             c.stop()
+    except BaseException:
+        # The console window is usually closed before anyone can read a
+        # traceback, so mirror it into the log file - that is the only
+        # artifact a bug report can include after the fact.
+        import traceback
+        tb = traceback.format_exc()
+        print(tb, end="")
+        try:
+            log("FATAL: bridge crashed:\n" + tb, "rd")
+        except Exception:
+            pass
+        sys.exit(1)
     finally:
         log("===== BRIDGE STOP =====", "cy")

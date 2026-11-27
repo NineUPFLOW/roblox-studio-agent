@@ -211,7 +211,7 @@ call :log "Launching bridge.py with %PY%"
 REM Show the exit code ON SCREEN, not only in the log: a screenshot of this
 REM terminal is usually the only diagnostic we get, and "Bridge stopped" alone
 REM does not say whether it crashed (non-zero) or was closed normally.
-set "BRIDGE_EXIT=%errorlevel%"
+set "BRIDGE_EXIT=!errorlevel!"
 call :log "bridge.py exited with code %BRIDGE_EXIT%"
 
 echo.

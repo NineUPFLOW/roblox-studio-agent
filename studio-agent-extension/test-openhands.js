@@ -305,7 +305,9 @@ function composer({ plan = false, sending = false, spinner = false, stop = false
   const editor = el("div", {
     testid: "chat-input",
     class: "chat-input bg-transparent whitespace-pre-wrap",
-    attrs: { contenteditable: "true", "data-placeholder": "What do you want to build?", role: "textbox" },
+    // the live app swaps the placeholder when conversationMode flips to plan
+    // (i18n COMMON$LET_S_WORK_ON_A_PLAN) - mirror BOTH plan signals
+    attrs: { contenteditable: "true", "data-placeholder": plan ? "Let’s work on a plan" : "What do you want to build?", role: "textbox" },
   });
   editor.listeners = {};
   const send = el("button", { testid: "submit-button", class: "rounded-full", disabled: true }, [
@@ -550,6 +552,9 @@ const TEXT = 'result\n```json\n' + fenced + "\n```\nkeep going";
   console.log("\nmodes / errors");
   makePage({ rows: [], plan: true });
   ok(/Plan mode/.test(P.modeWarning()), "plan mode warns (it can only write a plan)");
+  ok(/Plan mode/.test(P.scanError() || ""), "plan mode also aborts a running turn (it can be toggled mid-session now)");
+  makePage({ rows: [] });
+  eq(P.scanError(), null, "back on Code → the mid-session plan abort clears");
   makePage({ rows: [], automation: true, noComposer: true });
   eq(P.getEditor(), null, "the Automations composer is refused (submitting there CREATES AN AUTOMATION)");
   ok(/Automations composer/.test(P.modeWarning()), "…with an explanation before Start");

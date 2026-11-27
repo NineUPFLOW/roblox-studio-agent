@@ -562,6 +562,20 @@ const ZSProvider = (() => {
   // Automations surfaces send to the WRONG endpoint, and a read-only
   // conversation has no composer at all. Warn before a session starts; the core
   // disables the Start button on a non-empty warning.
+  // Plan is DOM-visible two ways, and we accept either: the amber composer
+  // border (the #597FF4 class token) and the swapped data-placeholder ("Let's
+  // work on a plan" - i18n COMMON$LET_S_WORK_ON_A_PLAN). Since the 2026-11
+  // redesign Plan is no longer a launcher pill: it is a per-conversation toggle
+  // (composer overflow menu -> Plan, testids "overflow-agent-plan" /
+  // "plan-option") or the /plan skill, so it can also flip MID-session - hence
+  // inPlanMode() is checked from scanError too, not only at Start.
+  function inPlanMode() {
+    const card = composerCard();
+    const ed = getEditor();
+    return (!!card && /597FF4/.test(card.className || "")) ||
+           (!!ed && /plan/i.test(ed.getAttribute("data-placeholder") || ""));
+  }
+
   function modeWarning() {
     if (q1(S.launchAutomate)) {
       return "OpenHands Canvas is in “Automate” mode: your message would become an " +
@@ -571,11 +585,7 @@ const ZSProvider = (() => {
       return "This is the OpenHands Automations composer, not a chat. Start a " +
              "normal conversation at app.all-hands.dev/canvas/ and run Studio Agent there.";
     }
-    const card = composerCard();
-    const ed = getEditor();
-    const planClass = !!(card && /597FF4/.test(card.className || ""));
-    const planPh = !!(ed && /plan/i.test(ed.getAttribute("data-placeholder") || ""));
-    if (planClass || planPh) {
+    if (inPlanMode()) {
       return "OpenHands Canvas is in Plan mode, which only writes a plan and never " +
              "runs tools. Switch the composer to Code mode, then Start.";
     }
@@ -620,6 +630,14 @@ const ZSProvider = (() => {
         ? "The OpenHands Canvas composer is not on this page - open a chat at " +
           "https://app.all-hands.dev/canvas/ (a sign-in page or a settings tab has no input box)."
         : "The input box disappeared (session ended or the conversation was closed).";
+    }
+    // Plan can be toggled mid-session (composer menu or the /plan skill); a turn
+    // spent there ends in a planning document, never a Studio command - abort
+    // with a clear reason instead of timing out.
+    if (inPlanMode()) {
+      return "OpenHands switched this chat to Plan mode: it will only write a plan " +
+             "and never run the Studio commands. Switch the composer back to Code " +
+             "(the overflow menu on the input card), then send again.";
     }
     return null;
   }

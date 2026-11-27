@@ -2,6 +2,28 @@
 
 All notable changes to Studio Agent are documented here.
 
+## [1.6.1] - 2026-11-28
+
+### Fixed
+- **OpenHands Canvas: Plan mode is caught mid-session.** After the 2026-11
+  Canvas redesign Plan is no longer a launcher pill - it is a per-conversation
+  toggle (the composer's overflow menu, or the `/plan` skill), so a chat can
+  flip to Plan while a session is running. A turn spent in Plan ends in a
+  planning document that never runs tools; the provider now re-checks Plan on
+  every turn (amber composer border or the "Let's work on a plan" placeholder)
+  and aborts with a clear reason instead of timing out. Start-time refusal
+  covers it too. All other selectors were re-verified against the current
+  deployed bundle (send/stop/upload buttons, message rows, chrome testids) -
+  the redesign renames them through template literals, and the ones Studio
+  Agent relies on all still render.
+- **Bridge: a crash is now recorded in the log file.** The Python traceback was
+  printed to the console only, and that window is usually closed before anyone
+  can read it; it is now mirrored into `logs/bridge_debug.log`, and the bridge
+  exits with a non-zero code deliberately.
+- **start.bat: the exit code line could print blank** on some Windows builds
+  (`%errorlevel%` read too early); the batch now captures it with delayed
+  expansion, so "Bridge stopped with ERROR code N" always shows the number.
+
 ## [1.6.0] - 2026-11-28
 
 Adds a ninth AI provider (OpenHands Canvas) and strips the extension's
