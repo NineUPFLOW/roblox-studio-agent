@@ -2,6 +2,19 @@
 
 All notable changes to Studio Agent are documented here.
 
+## [1.7.3] - 2026-11-28
+
+### Fixed - ChatGPT (redesigned chat, verified live)
+- **The agent could not see the conversation.** ChatGPT dropped
+  `data-message-author-role` and `.markdown`; messages are now found by their
+  sr-only `h4[data-conversation-role]` label and the reply body by
+  `[data-markdown-text-style]`. The "You said:" label is excluded from text.
+- **Session died right after start ("input box disappeared").** The editor
+  selector required `contenteditable=true`, but the agent's own input lock sets
+  it to `false`; the locked editor is found again.
+- Command code blocks hide the whole card (header + copy button), not just the
+  code body.
+
 ## [1.7.2] - 2026-11-28
 
 ### Fixed - bridge

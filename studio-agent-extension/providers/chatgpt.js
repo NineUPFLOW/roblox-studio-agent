@@ -63,13 +63,17 @@ const ZSProvider = (() => {
   let diag = () => {}; // injected by core via init()
 
   const S = {
-    msg: "[data-message-author-role]",
+    // Used with closest(): any message node, legacy or 2026-11 markup.
+    msg: "[data-message-author-role], [data-turn-key]",
     userRole: "user",
     assistantRole: "assistant",
-    reply: ".markdown",
+    // 2026-11 redesign: the reply root is [data-markdown-text-style=assistant-message].
+    reply: ".markdown, [data-markdown-text-style='assistant-message']",
     // 2026-11 redesign dropped the #prompt-textarea id; the ProseMirror textbox
     // inside the composer <form> is the stable shape.
-    editor: "#prompt-textarea, form .ProseMirror[contenteditable='true']",
+    // No contenteditable filter: setInputLock flips it to "false" while the agent
+    // works, and the editor must still be found then.
+    editor: "#prompt-textarea, form .ProseMirror",
     // The ONE submit control; its data-testid says whether it is currently a
     // send or a stop button (see isStopBtn). Id first - it survives testid churn.
     // 2026-11 redesign: no id/testid any more - the send control is the form's
@@ -119,7 +123,14 @@ const ZSProvider = (() => {
   };
 
   // ── Turn classification ───────────────────────────────────────────────────
-  const role = (item) => (item && item.getAttribute ? item.getAttribute("data-message-author-role") : null);
+  // 2026-11 redesign: no data-message-author-role; each message is a container
+  // whose first child is an sr-only <h4 data-conversation-role="user|assistant">.
+  const ROLE_HEAD = "h4[data-conversation-role]";
+  const role = (item) => {
+    if (!item || !item.getAttribute) return null;
+    const head = item.querySelector(`:scope > ${ROLE_HEAD}`);
+    return item.getAttribute("data-message-author-role") || (head && head.getAttribute("data-conversation-role"));
+  };
   const isUserItem = (item) => role(item) === S.userRole;
   const isAssistantItem = (item) => role(item) === S.assistantRole;
 
@@ -166,6 +177,7 @@ const ZSProvider = (() => {
       if (n.nodeType === 3) { t += n.nodeValue; return; }
       if (n.nodeType !== 1) return;
       if (excludeSel && n.matches && n.matches(excludeSel)) return;
+      if (n.matches && n.matches(ROLE_HEAD)) return; // sr-only "You said:" label, not message text
       if (n.tagName === "BR") { t += "\n"; return; }
       // The editor's TRUE document, published by the MAIN-world tap. This is the
       // only complete source for a long block - take it and skip the subtree.
@@ -221,7 +233,11 @@ const ZSProvider = (() => {
   }
 
   // ── DOM primitives ────────────────────────────────────────────────────────
-  const allItems = () => [...document.querySelectorAll(S.msg)];
+  const allItems = () => {
+    const legacy = document.querySelectorAll("[data-message-author-role]");
+    if (legacy.length) return [...legacy];
+    return [...document.querySelectorAll(ROLE_HEAD)].map((h) => h.parentElement);
+  };
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
@@ -246,7 +262,8 @@ const ZSProvider = (() => {
   // apply here (Number(uuid) is NaN and that guard is skipped) - the
   // settled-history guard covers the same case provider-agnostically.
   const itemKey = (item) =>
-    (item && item.getAttribute ? item.getAttribute("data-message-id") : null) || null;
+    (item && item.getAttribute ? item.getAttribute("data-message-id") ||
+      item.querySelector("[data-chatgpt-selection-message-id]")?.getAttribute("data-chatgpt-selection-message-id") : null) || null;
   const lastAssistantId = () => itemKey(lastAssistant());
 
   const chatIsEmpty = () => allItems().length === 0;
@@ -869,7 +886,8 @@ const ZSProvider = (() => {
       // 1. Fenced code blocks carrying a command.
       mc.querySelectorAll(S.codeWrap).forEach((pre) => {
         if (pre.closest(".zs-chip")) return;
-        if (CMD_SHAPE.test(pre.textContent || "")) hide(pre, mc);
+        // 2026-11: hide the whole card (header "JSON" + copy button), not just the <pre>.
+        if (CMD_SHAPE.test(pre.textContent || "")) hide(pre.closest("[data-code-block]") || pre, mc);
       });
       // 2. Bare top-level blocks with an inline command (no <pre> inside).
       const kids = [...mc.children];

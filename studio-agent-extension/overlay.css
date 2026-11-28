@@ -498,14 +498,17 @@ message-content.zs-cmd-mask code-block { display: none !important; }
    every token, wiping any per-element .zs-tool-hide class. The .markdown
    container keeps its identity, so the provider marks IT with .zs-cmd-mask and
    this rule keeps every recreated <pre> hidden with no flash. Inert elsewhere. */
-.markdown.zs-cmd-mask pre { display: none !important; }
+.markdown.zs-cmd-mask pre,
+[data-markdown-text-style].zs-cmd-mask pre,
+[data-markdown-text-style].zs-cmd-mask [data-code-block] { display: none !important; }
 /* ChatGPT, UNFENCED command block: when the model writes ###LUA###…###END_LUA###
    as plain prose instead of a fenced block, the renderer splits it into dozens of
    sibling <p>/<pre> nodes (seen live 2026-08: 68 of them for a 208-line payload).
    The rule above only re-hides recreated <pre>, so the <p> half of that range
    would flash on every token. The provider adds this class only when the range
    covers the whole reply, i.e. the message IS the command. */
-.markdown.zs-cmd-mask-all > *:not(.zs-chip) { display: none !important; }
+.markdown.zs-cmd-mask-all > *:not(.zs-chip),
+[data-markdown-text-style].zs-cmd-mask-all > *:not(.zs-chip) { display: none !important; }
 /* GLM / Z.ai (Svelte): the reply's markdown subtree is recreated on stream
    updates and on the next send, wiping any per-element .zs-tool-hide class. The
    reply root (.chat-assistant) keeps its identity, so the provider marks IT with
