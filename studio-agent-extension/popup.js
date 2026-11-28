@@ -52,8 +52,9 @@ document.getElementById("settings").addEventListener("click", () => {
   // panel on an already-open supported AI tab first, so opening it doesn't
   // require a conversation to already be started there.
   chrome.tabs.query({}, (tabs) => {
-    const active = tabs.find((t) => t.active && t.url && SUPPORTED_HOSTS.some((h) => t.url.includes(h)));
-    const anySupported = active || tabs.find((t) => t.url && SUPPORTED_HOSTS.some((h) => t.url.includes(h)));
+    const isSupported = (t) => { try { return SUPPORTED_HOSTS.includes(new URL(t.url).hostname); } catch { return false; } };
+    const active = tabs.find((t) => t.active && isSupported(t));
+    const anySupported = active || tabs.find(isSupported);
     if (anySupported) {
       // The tab may simply have no content script (unsupported URL left open,
       // page predates an extension reload). Without a catch that rejects the

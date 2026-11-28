@@ -40,6 +40,7 @@
   // DOM node for a main-world inspector). Each entry carries a turn snapshot.
   const ZS_DIAG_MAX = 300;
   const _diag = [];
+  let _diagFlush = 0;
   function diag(event, data) {
     const snap = { ...P.snapshot(), gen: P.isGenerating(), run: A.running };
     const e = { t: Date.now(), iso: new Date().toISOString().slice(11, 23), event,
@@ -47,11 +48,16 @@
     _diag.push(e);
     if (_diag.length > ZS_DIAG_MAX) _diag.shift();
     try { console.log("[zs-diag]", e.iso, event, JSON.stringify({ ...data, ...snap })); } catch {}
-    try {
-      let n = document.getElementById("zs-diag-log");
-      if (!n) { n = document.createElement("script"); n.type = "application/json"; n.id = "zs-diag-log"; (document.body || document.documentElement).appendChild(n); }
-      n.textContent = JSON.stringify(_diag);
-    } catch {}
+    // Debounced: re-serialising 300 entries into the DOM on every event was a
+    // per-event layout/GC cost and re-fired the page MutationObserver.
+    if (!_diagFlush) _diagFlush = setTimeout(() => {
+      _diagFlush = 0;
+      try {
+        let n = document.getElementById("zs-diag-log");
+        if (!n) { n = document.createElement("script"); n.type = "application/json"; n.id = "zs-diag-log"; (document.body || document.documentElement).appendChild(n); }
+        n.textContent = JSON.stringify(_diag);
+      } catch {}
+    }, 1000);
     try { window.__zsDiag = _diag; } catch {}
     // Manual escape hatch for a blacked-out chat: __zsUnmask() in DevTools
     // removes every class/overlay this extension can hide content with, WITHOUT
@@ -952,7 +958,7 @@
     // if the model explicitly asks via {"server": "<id>"} (see list_mcp_servers).
     if (name === "list_commands" || name === "list_tools") {
       await ensureTools();
-      const requested = (args.server || "roblox").trim();
+      const requested = String(args.server || "roblox").trim();
       // The MCP proxy keeps advertising Roblox's catalogue even with no Studio
       // attached, so list_commands would hand back the full command list and read
       // as "Roblox is fine" - then every command silently fails. When Roblox is
@@ -1701,15 +1707,16 @@
   async function loadSysCount() {
     const k = sysKey();
     if (k === sysCountKey) return sysCount;
+    // Counts of the previous conversation never carry over; bumps that land
+    // while the read is in flight go into the fresh object and are merged below.
     sysCountKey = k;
-    const local = sysCount;
     sysCount = { users: 0, results: 0 };
     try {
       const r = await new Promise((res) => chrome.storage.local.get(k, res));
       const saved = r && r[k];
-      if (saved) sysCount = {
-        users: Math.max(saved.users || 0, local.users || 0),
-        results: Math.max(saved.results || 0, local.results || 0),
+      if (saved && sysCountKey === k) sysCount = {
+        users: Math.max(saved.users || 0, sysCount.users || 0),
+        results: Math.max(saved.results || 0, sysCount.results || 0),
       };
     } catch {}
     return sysCount;
@@ -1725,7 +1732,7 @@
   // mechanism here, not the source of truth for the current tick.
   function bumpSys(field) {
     if (!RESEND_SYS_EVERY) return;
-    if (sysCountKey !== sysKey()) { sysCountKey = sysKey(); }
+    if (sysCountKey !== sysKey()) loadSysCount(); // sync part switches key + zeroes counts
     sysCount[field]++;
     saveSysCount();
   }
@@ -3742,6 +3749,8 @@
         if (P.coverTarget) cover.style.borderRadius = getComputedStyle(covNode).borderRadius;
         coverRaf = requestAnimationFrame(place);
       };
+      // Re-entry while already on (every tool result) must not stack a 2nd loop.
+      cancelAnimationFrame(coverRaf);
       place();
     }
 
@@ -4194,6 +4203,7 @@
     } else {
       // Different conversation → recompute from scratch.
       has = markerInDom || (!!path && startedSessions.has(path));
+      if (path !== lastSyncPath) A.maxTurnId = null; // turn ids are per-conversation
       lastSyncPath = path;
     }
     if (has !== A.started) {
@@ -4256,7 +4266,8 @@
       }
     }
   }
-  const mo = new MutationObserver(() => {
+  const mo = new MutationObserver((muts) => {
+    if (muts.every((m) => m.target.id === "zs-diag-log")) return; // our own diag mirror
     preHideWholeItems();
     scheduleSweep();
   });

@@ -766,7 +766,10 @@ const ZSProvider = (() => {
     for (const cc of item.querySelectorAll(S.copyCodeBtn)) {
       if (cc.closest(S.thinking)) continue;
       const wrap = cc.closest(S.codeWrap);
-      if (!wrap || wrap === item || wrap.closest(".zs-chip")) continue;
+      // closest() can walk OUT of the turn (a copy button with no code wrapper of
+      // its own) up to the chat panel's own div.relative - hiding that blanked the
+      // whole conversation and the composer. Only a wrapper INSIDE the turn counts.
+      if (!wrap || wrap === item || !item.contains(wrap) || wrap.closest(".zs-chip")) continue;
       if (!wrap.querySelector("pre, code")) continue;
       if (CMD_SHAPE.test(wrap.textContent || "")) {
         wrap.classList.add("zs-tool-hide");

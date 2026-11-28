@@ -82,6 +82,9 @@
       if (buf) foldLine(buf, acc);
     } catch {}
     acc.done = true;
+    // A non-answer response (error JSON, non-streaming call) must not overwrite
+    // the last real answer: publish() is last-writer-wins.
+    if (!acc.rid && !acc.text) return;
     publish({ rid: acc.rid, text: acc.text, done: acc.done, t: Date.now() });
   }
 

@@ -106,6 +106,13 @@ echo "  [3/3] Starting bridge..."
 # new instance would fail to bind - free it first.
 if command -v lsof >/dev/null 2>&1; then
     OLD_PID="$(lsof -ti "tcp:$BRIDGE_PORT" -s TCP:LISTEN 2>/dev/null | head -n1)"
+    # Only replace a process that is provably a previous bridge - never kill
+    # an unrelated app that happens to own the port.
+    if [ -n "${OLD_PID:-}" ] && ! ps -p "$OLD_PID" -o command= 2>/dev/null | grep -q "bridge.py"; then
+        echo "        Port $BRIDGE_PORT is used by another program (pid $OLD_PID) - not touching it."
+        log "Port $BRIDGE_PORT held by non-bridge pid $OLD_PID; left alone."
+        OLD_PID=""
+    fi
     if [ -n "${OLD_PID:-}" ]; then
         echo "        A previous bridge (pid $OLD_PID) is on port $BRIDGE_PORT. Replacing it..."
         log "Killing previous bridge pid $OLD_PID on port $BRIDGE_PORT."

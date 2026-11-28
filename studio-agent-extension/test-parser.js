@@ -108,3 +108,17 @@ ok("no dsml false positive on prose",
    !ZSParse.DSML_RE.test("I considered the DSML invoke and parameter tags, but used JSON instead."));
 ok("no dsml false positive on a real command",
    !ZSParse.DSML_RE.test('{"command": "script_read", "params": {"target_file": "x"}}'));
+
+// stripCodeChrome must drop UI labels but never a Lua identifier named json/copy.
+const luaCode = (c) => (ZSParse.parseToolCalls("###LUA###\n" + c + "\n###END_LUA###")[0] || {}).arguments?.code;
+ok("lua `copy =` identifier kept", luaCode("copy = workspace.Part:Clone()") === "copy = workspace.Part:Clone()");
+ok("lua `json =` identifier kept", luaCode("json = H:JSONDecode(s)") === "json = H:JSONDecode(s)");
+ok("lua Copy(x) kept", luaCode("Copy(x)") === "Copy(x)");
+ok("Kimi inline Copy caption stripped", luaCode("Copy task.wait(1)") === "task.wait(1)");
+ok("label on its own line stripped", luaCode("json\nprint(1)") === "print(1)");
+// Outer object wins over a nested "command" argument.
+const legacyNested = ZSParse.parseToolCalls('{"tool":"X","arguments":{"command":"insert","a":1}}');
+ok("legacyNested outer tool wins over inner command arg", legacyNested.length === 1 && legacyNested[0].tool === "X");
+// A later still-streaming command is open even after an earlier closed one.
+ok("later open command detected", ZSParse.hasOpenToolBlock('{"command":"a"} then {"command":"b","params":{"x":') === true);
+ok("all-closed commands not open", ZSParse.hasOpenToolBlock('{"command":"a"} done') === false);

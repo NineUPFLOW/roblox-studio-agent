@@ -167,7 +167,7 @@ const ZSProvider = (() => {
     const ed = getEditor();
     if (!ed) return;
     if (on) {
-      if (!ed.dataset.zsPlaceholder) ed.dataset.zsPlaceholder = ed.getAttribute("placeholder") || "";
+      if (ed.dataset.zsPlaceholder === undefined) ed.dataset.zsPlaceholder = ed.getAttribute("placeholder") || "";
       ed.setAttribute("readonly", "");
       ed.setAttribute("placeholder", "⏳ Agent working… please wait");
     } else {

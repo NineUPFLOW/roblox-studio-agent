@@ -783,7 +783,15 @@ const ZSProvider = (() => {
     document.addEventListener(
       "click",
       (e) => {
+        // Our own programmatic .click()s must not read as user intent.
+        if (!e.isTrusted) return;
         if (!getEditor()) return;
+        // The user pressing Qwen's own stop button = stop the agent too (else the
+        // auto-resume watchdog relaunches the loop against their intent).
+        if (e.target && e.target.closest && e.target.closest(S.stopBtn)) {
+          handlers.onNativeStop();
+          return;
+        }
         const btn = e.target && e.target.closest && e.target.closest(S.sendBtn);
         if (!btn) return;
         if (handlers.isBlocked()) return;

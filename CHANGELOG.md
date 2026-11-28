@@ -2,6 +2,62 @@
 
 All notable changes to Studio Agent are documented here.
 
+## [1.7.2] - 2026-11-28
+
+### Fixed - bridge
+- **Port-reclaim never worked on non-English Windows.** `netstat` localises the
+  state column (`ПРОСЛУШИВАНИЕ`, `ABHÖREN`...), so the `"LISTENING"` match found
+  nothing. Listeners are now detected by their wildcard foreign address.
+- **Restart after add/remove server broke on Windows.** `os.execv` spawned an
+  unquoted child (fails on paths with spaces) and `start.bat` then printed
+  "Bridge stopped normally" while a detached bridge kept running. Under
+  `start.bat` the bridge now exits with code 75 and the launcher relaunches it.
+- **macOS/Linux: StudioMCP orphans on every restart.** Servers run in their own
+  process group and `stop()` kills the whole group; a replaced process's EOF no
+  longer fails the new process's pending calls.
+- **A broken `config.json` was silently overwritten** with the default-only
+  config on the next add/remove server. Now refused with a clear error.
+- Malformed frames (non-object JSON, non-dict `arguments`, non-numeric
+  `timeout`) no longer drop the whole connection; port forensics no longer
+  block the event loop; "port in use" now exits with code 1; legacy-websockets
+  403 uses `str` headers.
+- `start.bat` no longer kills whatever owns port 17613 (ignoring
+  `ZS_BRIDGE_PORT`); `MacOS_Start.command` only replaces a process that is
+  provably a previous `bridge.py`.
+
+### Fixed - site redesigns (verified live 2026-11-28)
+- **OpenHands: the whole conversation and composer vanished.** A copy button
+  with no code wrapper of its own made the masker climb OUT of the turn and
+  hide the chat panel. Only wrappers inside the turn are hidden now.
+- **ChatGPT: panel missing.** The redesign dropped `#prompt-textarea` and the
+  send/stop testids; the editor, submit/stop buttons and bar mount are found by
+  the new markup (stop by its localised label).
+- **Arena: ported to the new composer** (TipTap contenteditable instead of a
+  textarea; filled by one exact HTML paste). Modes are now Chat/Agent - Chat is
+  supported and the extension no longer opens the mode menu on every load.
+- **Arena Agent mode is now supported** (`/agent`): its own transcript markup,
+  a composer outside any `<form>`, and the "Was this task completed?" card that
+  replaces the composer after each turn is dismissed automatically.
+
+### Fixed - extension
+- **Leaked animation loops:** every tool result started another "Agent is
+  working" cover `requestAnimationFrame` loop; N tool calls = N layout loops
+  per frame (lag/freezes in long sessions).
+- **Diagnostics log** re-serialised 300 entries into the DOM on every event and
+  re-triggered the page MutationObserver; now debounced and ignored.
+- **Stale-socket race in background.js:** the old socket's late `onclose` wiped
+  state and failed in-flight calls of the NEW connection.
+- **Parser:** Lua starting with `copy = ...` / `json = ...` lost its first word;
+  a nested `"command"` argument could win over the outer `"tool"`; a later
+  still-streaming command was not seen as open.
+- **Qwen:** pressing the site's Stop now stops the agent (auto-resume no longer
+  relaunches it); a non-answer response no longer erases the captured answer.
+- System-prompt resend counters no longer carry over into a new conversation;
+  the auto-resume high-water turn id resets per conversation.
+- `list_commands` with a non-string `server` no longer crashes the loop;
+  DeepSeek/Arena placeholder restore fixed when the original was empty; popup
+  Settings matches tabs by hostname, not substring.
+
 ## [1.7.1] - 2026-11-28
 
 ### Fixed (regression from 1.7.0 - update required if the bridge stopped accepting the extension)

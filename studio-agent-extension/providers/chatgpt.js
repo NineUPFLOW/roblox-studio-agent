@@ -67,10 +67,14 @@ const ZSProvider = (() => {
     userRole: "user",
     assistantRole: "assistant",
     reply: ".markdown",
-    editor: "#prompt-textarea",
+    // 2026-11 redesign dropped the #prompt-textarea id; the ProseMirror textbox
+    // inside the composer <form> is the stable shape.
+    editor: "#prompt-textarea, form .ProseMirror[contenteditable='true']",
     // The ONE submit control; its data-testid says whether it is currently a
     // send or a stop button (see isStopBtn). Id first - it survives testid churn.
-    submitBtn: "#composer-submit-button, button[data-testid='send-button'], button[data-testid='stop-button']",
+    // 2026-11 redesign: no id/testid any more - the send control is the form's
+    // only type=submit button (localised aria-label).
+    submitBtn: "#composer-submit-button, button[data-testid='send-button'], button[data-testid='stop-button'], form button[type='submit']",
     // Kept for installSendHooks, which needs to recognise a click on the native
     // stop control wherever it lives.
     stopBtn: "button[data-testid='stop-button']",
@@ -308,7 +312,7 @@ const ZSProvider = (() => {
   function barMount() {
     const ed = getEditor();
     if (!ed) return null;
-    const box = ed.closest("[class*='composer-surface']");
+    const box = ed.closest("[class*='composer-surface'], [data-composer-body]");
     if (!box) return null;
     const area = topArea(box);
     if (area) {
@@ -343,9 +347,13 @@ const ZSProvider = (() => {
   // sendButton() cheerfully returns the stop square and every guarded click is
   // refused. That is exactly what stranded a tool result in the composer and
   // raised "ChatGPT did not accept the injected message after 4 attempts".
-  const isStopBtn = (b) => !!b && b.getAttribute("data-testid") === "stop-button";
+  // Redesigned composer has no testids: recognise stop by its localised label.
+  const STOP_LABEL = /stop|останов|прерв|interrompre|detener|anhalten|parar|停止/i;
+  const isStopBtn = (b) => !!b && (b.getAttribute("data-testid") === "stop-button" ||
+    (!b.getAttribute("data-testid") && !!b.closest("form") && STOP_LABEL.test(b.getAttribute("aria-label") || "")));
   const submitButton = () => {
-    const b = document.querySelector(S.submitBtn);
+    const b = document.querySelector(S.submitBtn) ||
+      [...document.querySelectorAll("form button")].find(isStopBtn) || null;
     return b && b.offsetParent !== null ? b : null;
   };
   const sendButton = () => {
@@ -817,8 +825,8 @@ const ZSProvider = (() => {
         }
         // Stop is tested FIRST: it is the same node as send, just in its other
         // role, so a stop click would otherwise read as a user send.
-        const stop = t && t.closest && t.closest(S.stopBtn);
-        if (stop) { handlers.onNativeStop(); return; }
+        const stop = t && t.closest && (t.closest(S.stopBtn) || t.closest("form button"));
+        if (stop && isStopBtn(stop)) { handlers.onNativeStop(); return; }
         const btn = t && t.closest && t.closest(S.submitBtn);
         if (!btn || isStopBtn(btn)) return;
         if (handlers.isBlocked()) return;

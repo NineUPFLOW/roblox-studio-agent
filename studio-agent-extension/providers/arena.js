@@ -18,9 +18,12 @@
 //  - Fenced code is a REAL <pre> (textContent preserves newlines - no
 //    CodeMirror/Monaco), wrapped in a <div class="not-prose">. Studio Agent's
 //    command markers/JSON survive intact in textContent.
-//  - The composer is a real <textarea> inside a <form> (the ONLY form textarea;
-//    other page textareas are recaptcha/aria-hidden). We set its .value via the
-//    native setter + input event, then click the submit button.
+//  - The composer is a TipTap/ProseMirror contenteditable inside a <form>
+//    (2026-11 redesign; it used to be a <textarea>, still supported). We fill it
+//    with a synthetic HTML paste (<br> per line, white-space:pre-wrap - exact
+//    text, one ProseMirror transaction), then click the submit button.
+//  - Chat modes are now "Chat" (one prompt, often an A/B comparison) and "Agent"
+//    (a separate /agent app) - "Direct" is gone.
 //  - The primary button carries aria-label "Send message" (idle) and is replaced
 //    by an aria-label "Stop generation" button for the WHOLE generation.
 //  - Conversation URL is /c/<uuid>; a fresh chat is /text/direct (no id yet).
@@ -96,6 +99,16 @@ const ZSProvider = (() => {
   // explicitly or it is never counted as a reply.
   const isCarouselItem = (c) => !!c && !!c.querySelector(S.carousel);
 
+  // Agent mode is a separate app on /agent[/<id>]: no <ol>, no <form>; each turn
+  // is a [data-agent-transcript-message] node in a role=log transcript, already
+  // in chronological order. A user turn is a right-aligned bg-surface-raised
+  // bubble; an assistant turn is a bg-surface-primary card ("Thought for…",
+  // "Ran commands" steps + the .prose answer).
+  const isAgentRoute = () => /^\/agent(?:\/|$)/.test(location.pathname);
+  const AGENT_TURN = "[data-agent-transcript-message]";
+  const agentTurns = () =>
+    [...document.querySelectorAll(AGENT_TURN)].filter((t) => t.querySelector(S.box));
+
   function domTurns() {
     const ol = listEl();
     if (!ol) return [];
@@ -113,12 +126,16 @@ const ZSProvider = (() => {
   // on a single candidate so a 2-slide carousel can never desync the loop.
   function proseOf(item) {
     if (!item) return null;
+    // Agent turn: the answer is the LAST .prose (earlier ones are step notes).
+    if (item.matches(AGENT_TURN)) { const ps = item.querySelectorAll(S.box); return ps[ps.length - 1] || null; }
     const slide = item.querySelector(S.slide);
     return slide ? slide.querySelector(S.box) : item.querySelector(S.box);
   }
 
   // A carousel container is never right-aligned, so it classifies as assistant.
-  const isUserItem = (item) => !!item && item.classList.contains("justify-end");
+  const isUserItem = (item) => !!item && (item.matches(AGENT_TURN)
+    ? !item.querySelector(".bg-surface-primary")
+    : item.classList.contains("justify-end"));
   const isAssistantItem = (item) => !!item && !isUserItem(item);
 
   // ── Chip anchor ───────────────────────────────────────────────────────────
@@ -219,7 +236,7 @@ const ZSProvider = (() => {
   // ── DOM primitives ──────────────────────────────────────────────────────
   // The list is flex-col-reverse (newest-first in the DOM); reverse so the core
   // sees the usual chronological order and lastAssistant() = the latest reply.
-  const allItems = () => domTurns().reverse();
+  const allItems = () => (isAgentRoute() ? agentTurns() : domTurns().reverse());
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
@@ -229,11 +246,12 @@ const ZSProvider = (() => {
   // textarea (#zs-root) so the send hooks' "not on a chat page" guard holds on
   // login/OAuth pages that have no site composer.
   const getEditor = () => {
-    for (const e of document.querySelectorAll("form textarea")) {
-      if (!e.closest("#zs-root")) return e;
+    for (const e of document.querySelectorAll("form [contenteditable='true'], form textarea, .tiptap[contenteditable='true']")) {
+      if (!e.closest("#zs-root") && !e.closest("[aria-hidden='true']")) return e;
     }
     return null;
   };
+  const isRichEditor = (e) => !!e && e.tagName !== "TEXTAREA";
   const editorText = () => {
     const e = getEditor();
     if (!e) return "";
@@ -265,13 +283,15 @@ const ZSProvider = (() => {
   const chatIsEmpty = () => allItems().length === 0;
   // A genuinely fresh chat: the /text/* route with the composer rendered and no
   // turns. An existing conversation is /c/<id>, so it never gates.
+  // Fresh-chat routes: the home page "/", "/chat" and the legacy /text/*.
+  const FRESH_ROUTE = /^\/(?:text\/.*|chat\/?|agent\/?)?$/;
   const isFreshChat = () =>
-    chatIsEmpty() && /^\/text\//.test(location.pathname) && !!getEditor();
+    chatIsEmpty() && FRESH_ROUTE.test(location.pathname) && !!getEditor();
 
   // The whole composer the Start gate hides as one unit = the <form>.
   const composerFrame = () => {
     const ed = getEditor();
-    return ed ? ed.closest("form") : null;
+    return ed ? ed.closest("form") || ed.closest("[class*='rounded-[14px]']") : null;
   };
 
   // Arena is a React app that reconciles the composer subtree, so we must NOT
@@ -295,11 +315,25 @@ const ZSProvider = (() => {
   // native prototype setter used in setTextareaValue(), so our own injections
   // keep working. getEditor() keys off the <form>, not the placeholder, so the
   // placeholder swap below is safe.
+  // Rich (TipTap) composer: block the USER's trusted input events while locked;
+  // our own synthetic paste is untrusted and passes. Survives ProseMirror
+  // re-rendering the node (an attribute-based lock would not).
+  let _locked = false;
+  for (const type of ["beforeinput", "keydown", "paste", "drop"]) {
+    document.addEventListener(type, (e) => {
+      if (!_locked || !e.isTrusted) return;
+      const ed = getEditor();
+      if (!ed || !isRichEditor(ed) || !ed.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
+  }
   function setInputLock(on) {
+    _locked = !!on;
     const ed = getEditor();
-    if (!ed) return;
+    if (!ed || isRichEditor(ed)) return;
     if (on) {
-      if (!ed.dataset.zsPlaceholder) ed.dataset.zsPlaceholder = ed.getAttribute("placeholder") || "";
+      if (ed.dataset.zsPlaceholder === undefined) ed.dataset.zsPlaceholder = ed.getAttribute("placeholder") || "";
       ed.setAttribute("readonly", "");
       ed.setAttribute("placeholder", "⏳ Agent working… please wait");
     } else {
@@ -425,11 +459,34 @@ const ZSProvider = (() => {
     el.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
+  // TipTap: one synthetic HTML paste. <br> per line + white-space:pre-wrap keep
+  // the text EXACT (validated live: a plain-text paste turns every line into its
+  // own paragraph = doubled newlines; without pre-wrap runs of spaces collapse).
+  async function setRichText(el, v) {
+    el.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const esc = (x) => x.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const dt = new DataTransfer();
+    dt.setData("text/plain", v);
+    dt.setData("text/html", `<p style="white-space:pre-wrap">${String(v).split("\n").map(esc).join("<br>")}</p>`);
+    el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    if (!v.trim()) return;
+    if (!(await waitFor(() => (el.textContent || "").trim().length > 0, 3000))) {
+      // Paste refused (editor not ready): fall back to typing it.
+      document.execCommand("insertText", false, v);
+    }
+  }
+
   async function typeAndSend(text, images) {
     const editor = getEditor();
     if (!editor) throw new Error("Arena input box not found");
     editor.focus();
-    setTextareaValue(editor, truncateForSend(text));
+    if (isRichEditor(editor)) await setRichText(editor, truncateForSend(text));
+    else setTextareaValue(editor, truncateForSend(text));
     if (images && images.length) tagImages(images);
     diag("arena.tas.enter", {
       textLen: (text || "").length,
@@ -515,15 +572,13 @@ const ZSProvider = (() => {
   // Battle Mode (2 anonymous models → always an A/B comparison), Side by Side
   // (2 chosen models → also A/B), and Agent Mode (autonomous, single model).
   // Studio Agent only supports DIRECT. Battle / Side by Side force a fresh A/B
-  // comparison on EVERY turn. Agent Mode is a SEPARATE app (route /agent, a
-  // TipTap/ProseMirror contenteditable composer with NO <form>, and NO <ol>
-  // message list) on which every DOM assumption here breaks - getEditor() returns
-  // null so the bar can't even anchor; supporting it would be a full port, so it
-  // stays gated. The mode dropdown's trigger is a `button[role="combobox"]` whose
+  // comparison on EVERY turn. Agent Mode is a SEPARATE app (route /agent, no
+  // <form>, no <ol>); since 2026-11 it is supported via the isAgentRoute()
+  // branches (agentTurns / proseOf / getEditor). The mode dropdown's trigger is a `button[role="combobox"]` whose
   // visible text IS the current mode name; we read it to gate Start. Detection
   // fails OPEN (unknown → allow) so a DOM reskin never wrongly blocks the default.
-  const MODE_RE = /\b(direct|battle|agent|side by side)\b/i;
-  const SUPPORTED_MODES = new Set(["direct"]);
+  const MODE_RE = /\b(direct|chat|battle|agent|side by side)\b/i;
+  const SUPPORTED_MODES = new Set(["direct", "chat", "agent"]);
   function currentMode() {
     for (const c of document.querySelectorAll('button[role="combobox"]')) {
       if (c.offsetParent === null) continue;
@@ -583,18 +638,22 @@ const ZSProvider = (() => {
   function pickDirectOption() {
     for (const o of document.querySelectorAll('[role="option"]')) {
       if (o.offsetParent === null) continue;
-      if (/^\s*direct/i.test(o.textContent || "")) { try { o.click(); } catch {} return true; }
+      if (/^\s*(?:direct|chat)/i.test(o.textContent || "")) { try { o.click(); } catch {} return true; }
     }
     return false;
   }
   async function restoreDirectOnce() {
-    if (activeUnsupportedMode()) return; // Build Apps / Search / Image route - leave alone
+    if (activeUnsupportedMode() || isAgentRoute()) return; // other routes / Agent app - leave alone
     let combo = null;
     for (let i = 0; i < 60 && !combo; i++) { // up to ~15s for post-login load
       combo = [...document.querySelectorAll('button[role="combobox"]')].find((x) => x.offsetParent !== null) || null;
       if (!combo) await sleep(250);
     }
-    if (!combo || /direct/i.test(combo.textContent || "")) return; // gone or already Direct
+    // Gone, or already on a supported mode (Direct / Chat): never open the menu -
+    // the 2026-11 redesign has no "Direct" option, so the old check opened the
+    // dropdown on EVERY page load and left it hanging open.
+    const m = ((combo && combo.textContent) || "").trim().toLowerCase().match(MODE_RE);
+    if (!combo || !m || SUPPORTED_MODES.has(m[1])) return;
     // Open the dropdown only if it is closed - clicking an already-open combobox
     // would toggle it shut and there would be no option to pick.
     if (combo.getAttribute("aria-expanded") !== "true") { try { combo.click(); } catch {} }
@@ -617,8 +676,8 @@ const ZSProvider = (() => {
     if (isSupportedMode()) return "";
     const m = currentMode();
     const name = m ? m.charAt(0).toUpperCase() + m.slice(1) : "another mode";
-    return `Switch the mode dropdown to <b>Direct</b> - Studio Agent only works in ` +
-      `Direct mode (current: <b>${name}</b>).`;
+    return `Switch the mode dropdown to <b>Chat</b> - Studio Agent only works in ` +
+      `Chat (Direct) mode (current: <b>${name}</b>).`;
   }
 
   // A bot-check challenge is on screen (Cloudflare Turnstile / hCaptcha /
@@ -673,7 +732,35 @@ const ZSProvider = (() => {
   // A/B battle the instant its "Continuer avec A" button appears (this runs every
   // sweep), so the comparison commits to candidate A and the loop reads a single
   // normal reply.
+  // Agent mode: after every finished turn Arena swaps the composer for a "Was
+  // this task completed successfully? Yes / No / Continue working (Esc)" card.
+  // While it is up there is NO editor, so the loop read "input box disappeared"
+  // and died. Esc dismisses it and restores the composer (validated live).
+  const FEEDBACK_CONT_RE = /^\s*(continue working|keep working|продолжить работу|continuer (?:le travail|à travailler))\s*$/i;
+  let _feedbackAt = 0;
+  function agentFeedbackCard() {
+    if (!isAgentRoute()) return null;
+    for (const b of document.querySelectorAll("button")) {
+      if (b.offsetParent !== null && FEEDBACK_CONT_RE.test(b.textContent || "")) {
+        return b.closest("[class*='rounded-md']") || b.parentElement;
+      }
+    }
+    return null;
+  }
+  function dismissAgentFeedback() {
+    const card = agentFeedbackCard();
+    if (!card || Date.now() - _feedbackAt < 800) return !!card;
+    _feedbackAt = Date.now();
+    const o = { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true };
+    for (const t of [document.activeElement, document.body, document]) {
+      try { if (t) t.dispatchEvent(new KeyboardEvent("keydown", o)); } catch {}
+    }
+    diag("arena.agent_feedback_dismiss", {});
+    return true;
+  }
+
   function enforceComposer() {
+    dismissAgentFeedback();
     resolveBattle();
     return { ready: isSupportedMode() };
   }
@@ -691,12 +778,15 @@ const ZSProvider = (() => {
     try {
       for (const el of document.querySelectorAll(S.errorSurfaces)) {
         if (el.offsetParent === null) continue;
-        if (el.closest(S.list)) continue; // inside a chat turn ⇒ model content
+        if (el.closest(S.list) || el.closest(AGENT_TURN)) continue; // inside a chat turn ⇒ model content
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && RE.contextLimit.test(t)) return t.slice(0, 240);
       }
     } catch {}
-    if (!getEditor()) return "The input box disappeared (session ended?).";
+    if (!getEditor()) {
+      if (dismissAgentFeedback()) return null; // Agent's feedback card, not a dead chat
+      return "The input box disappeared (session ended?).";
+    }
     return null;
   }
   const isTooLongMsg = (text) => RE.tooLong.test(text);
@@ -774,7 +864,7 @@ const ZSProvider = (() => {
 
   // /text/* = a fresh chat with no conversation id yet → "" (transient, never
   // persisted as "started"). A real conversation is /c/<uuid>.
-  const conversationKey = () => (/^\/text\//.test(location.pathname) ? "" : location.pathname);
+  const conversationKey = () => (FRESH_ROUTE.test(location.pathname) ? "" : location.pathname);
 
   // ── User-send interception ────────────────────────────────────────────────
   function installSendHooks(handlers) {

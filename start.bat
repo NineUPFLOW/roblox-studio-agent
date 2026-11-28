@@ -167,34 +167,9 @@ REM --- 3. Run the bridge ------------------------------------------------------
 echo.
 echo   [3/3] Starting bridge...
 
-REM If a previous bridge is already listening on 17613, say so instead of
-REM silently killing it - a double-launch is easy to do by mistake (e.g.
-REM double-clicking start.bat twice) and should not look like nothing happened.
-set "OLDPID="
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :17613 ^| findstr LISTENING 2^>nul') do (
-    set "OLDPID=%%a"
-)
-if defined OLDPID (
-    echo         A previous bridge ^(pid !OLDPID!^) is already running on this port.
-    echo         Replacing it with this new instance...
-    call :log "Killing previous bridge instance (pid !OLDPID!) on port 17613."
-    taskkill /F /T /PID !OLDPID! >nul 2>nul
-    REM Give Windows a moment to actually free the socket before we rebind it.
-    timeout /t 1 /nobreak >nul
-    set "STILLTHERE="
-    for /f "tokens=5" %%a in ('netstat -aon ^| findstr :17613 ^| findstr LISTENING 2^>nul') do (
-        set "STILLTHERE=%%a"
-    )
-    if defined STILLTHERE (
-        echo.
-        echo   WARNING: port 17613 is still held by pid !STILLTHERE! after trying
-        echo   to close the previous bridge. If the bridge below fails to start,
-        echo   close that process manually in Task Manager ^(or restart Windows^)
-        echo   and run start.bat again.
-        echo.
-        call :log "WARNING: port 17613 still held by pid !STILLTHERE! after taskkill."
-    )
-)
+REM A leftover bridge on the port is reclaimed by bridge.py itself: it kills the
+REM old process only if it is provably another bridge.py, honours ZS_BRIDGE_PORT,
+REM and does not depend on netstat's LOCALISED state text (LISTENING etc).
 
 echo.
 echo  ############################################################
@@ -206,8 +181,16 @@ echo  ##   minimize this window and leave it running.           ##
 echo  ##                                                        ##
 echo  ############################################################
 echo.
+set "ZS_LAUNCHER=bat"
+:run_bridge
 call :log "Launching bridge.py with %PY%"
 %PY% "%~dp0bridge.py"
+REM Exit code 75 = the bridge asked to be restarted (new MCP server config).
+if "!errorlevel!"=="75" (
+    call :log "bridge.py requested a restart"
+    echo   Restarting bridge to load the new server config...
+    goto :run_bridge
+)
 REM Show the exit code ON SCREEN, not only in the log: a screenshot of this
 REM terminal is usually the only diagnostic we get, and "Bridge stopped" alone
 REM does not say whether it crashed (non-zero) or was closed normally.

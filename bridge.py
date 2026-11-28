@@ -22,6 +22,7 @@ import asyncio
 import json
 import os
 import queue
+import signal
 import subprocess
 import sys
 import threading
@@ -74,7 +75,7 @@ def _enable_ansi_colors():
 HOST = "127.0.0.1"
 # Keep in sync with studio-agent-extension/manifest.json "version" - printed at
 # startup so a user's terminal output alone tells us which build they're on.
-BRIDGE_VERSION = "1.7.1"
+BRIDGE_VERSION = "1.7.2"
 PORT = int(os.environ.get("ZS_BRIDGE_PORT", "17613"))
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -249,9 +250,12 @@ def _port_owner(port):
     # on the ":<port> " suffix (with the column gap) covers both shapes.
     needle = f":{port} "
     for line in out.splitlines():
-        if "LISTENING" in line and needle in line:
-            parts = line.split()
-            if parts and parts[-1].isdigit():
+        # netstat LOCALISES the state column (LISTENING / ПРОСЛУШИВАНИЕ / ABHÖREN...),
+        # so identify a listener by its wildcard foreign address instead.
+        parts = line.split()
+        if (len(parts) >= 4 and parts[0].upper() == "TCP" and parts[1].endswith(needle.strip())
+                and parts[2] in ("0.0.0.0:0", "[::]:0")):
+            if parts[-1].isdigit():
                 pid = parts[-1]
                 break
     if not pid:
@@ -656,6 +660,21 @@ def _read_config():
     return {"mcpServers": {PRIMARY_SERVER_ID: {"command": "launch_studio_mcp.py", "args": []}}}
 
 
+def _config_corrupt():
+    """True when config.json exists but cannot be parsed: writing then would
+    replace the user's hand-edited servers with the default-only config."""
+    if not os.path.exists(CONFIG_PATH):
+        return False
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return not isinstance(json.load(f), dict)
+    except Exception:
+        return True
+
+
+_CORRUPT_MSG = "config.json is not valid JSON - fix or delete it first (refusing to overwrite your servers)"
+
+
 def _write_config(cfg):
     """Atomic write so a crash mid-write never leaves a truncated config.json."""
     tmp = CONFIG_PATH + ".tmp"
@@ -674,6 +693,8 @@ def config_add_server(server_id, command, args=None, env=None):
         return False, f"'{PRIMARY_SERVER_ID}' is the primary server and cannot be edited"
     if not (command or "").strip():
         return False, "a command is required"
+    if _config_corrupt():
+        return False, _CORRUPT_MSG
     cfg = _read_config()
     spec = {"command": command.strip(), "args": list(args or [])}
     if env:
@@ -691,6 +712,8 @@ def config_remove_server(server_id):
     sid = (server_id or "").strip()
     if sid == PRIMARY_SERVER_ID:
         return False, f"'{PRIMARY_SERVER_ID}' is the primary server and cannot be removed"
+    if _config_corrupt():
+        return False, _CORRUPT_MSG
     cfg = _read_config()
     if sid not in cfg.get("mcpServers", {}):
         return False, f"server '{sid}' is not in the config"
@@ -700,6 +723,9 @@ def config_remove_server(server_id):
     except Exception as e:
         return False, f"could not write config.json: {e}"
     return True, None
+
+
+RESTART_EXIT_CODE = 75  # start.bat relaunches the bridge on this code
 
 
 def restart_self():
@@ -722,6 +748,18 @@ def restart_self():
     argv = list(sys.argv)
     script = os.path.abspath(argv[0]) if argv else os.path.abspath(__file__)
     argv = [script] + argv[1:]
+    if sys.platform == "win32":
+        # Windows has no real exec: os.execv spawns an UNQUOTED child (breaks on
+        # paths with spaces) and exits, so start.bat would report "stopped
+        # normally" while a detached bridge kept writing to its console.
+        # Under start.bat, exit with RESTART_EXIT_CODE and let it relaunch us.
+        if os.environ.get("ZS_LAUNCHER") == "bat":
+            os._exit(RESTART_EXIT_CODE)
+        try:
+            subprocess.Popen([sys.executable] + argv, cwd=HERE)  # list -> properly quoted
+        except Exception as e:
+            log(f"could not spawn a fresh bridge: {e} - please restart it manually", "rd")
+        os._exit(0)
     try:
         os.execv(sys.executable, [sys.executable] + argv)
     except Exception as e:
@@ -827,6 +865,9 @@ class MCPClient:
                         errors="replace",
                         cwd=HERE,
                         env=env,
+                        # POSIX: own process group, so stop() can kill the wrapper
+                        # AND its StudioMCP child (terminate() hit only the wrapper).
+                        start_new_session=(sys.platform != "win32"),
                     )
                 except FileNotFoundError:
                     # The OS couldn't find cmd[0] at all - this is a config
@@ -906,7 +947,14 @@ class MCPClient:
                         capture_output=True, timeout=8,
                     )
                 else:
-                    self.proc.terminate()
+                    try:
+                        os.killpg(self.proc.pid, signal.SIGTERM)
+                    except Exception:
+                        self.proc.terminate()
+            except Exception:
+                pass
+            try:
+                self.proc.stdin.close()  # EOF for any survivor still reading stdio
             except Exception:
                 pass
         self.proc = None
@@ -941,6 +989,8 @@ class MCPClient:
         code = proc.poll()
         self.last_exit = code  # kept for the crash-loop banner in server_watch
         log(f"[{self.id}] stdout closed (process ended, exit code {code})", "rd")
+        if self.proc is not None and self.proc is not proc:
+            return  # an old, replaced process ended: its waiters were failed by stop()
         with self.pend_lock:
             for q in self.pending.values():
                 try:
@@ -1384,7 +1434,7 @@ async def reject_web_page_origins(*args):
                 log(f"REFUSED websocket - web page origin {str(origin)[:100]!r}; "
                     f"only extension origins may connect", "rd")
                 import http
-                return http.HTTPStatus.FORBIDDEN, [(b"Content-Type", b"text/plain")], b"forbidden origin\n"
+                return http.HTTPStatus.FORBIDDEN, [("Content-Type", "text/plain")], b"forbidden origin\n"
             return None
         connection, request = args  # new asyncio API: (connection, request)
         origin = request.headers.get("Origin")
@@ -1426,6 +1476,8 @@ async def handler(ws):
                 msg = json.loads(raw)
             except Exception:
                 continue
+            if not isinstance(msg, dict):
+                continue  # a non-object frame must not kill the whole connection
             mtype = msg.get("type")
             rid = msg.get("id")
 
@@ -1459,7 +1511,12 @@ async def handler(ws):
             elif mtype == "call_tool":
                 name = msg.get("name", "")
                 args = msg.get("arguments") or {}
-                timeout = float(msg.get("timeout", 120000)) / 1000.0
+                if not isinstance(args, dict):
+                    args = {}
+                try:
+                    timeout = float(msg.get("timeout", 120000)) / 1000.0
+                except (TypeError, ValueError):
+                    timeout = 120.0
                 log(f"-> tool  {name}({', '.join(args.keys())})", "cy", terminal=False)
                 # Run the tool as a BACKGROUND task instead of awaiting it here.
                 # Awaiting inline parks this read loop for the WHOLE tool call, so
@@ -1571,7 +1628,7 @@ async def server_watch():
                         # Studio's MCP port; a squatter there (seen live: a
                         # 'ropilot' app) makes the proxy die/misbehave forever.
                         if sid == "roblox":
-                            owner = _port_owner(STUDIO_MCP_PORT)
+                            owner = await asyncio.to_thread(_port_owner, STUDIO_MCP_PORT)
                             if owner:
                                 pid, name, path = owner
                                 if "roblox" not in (name or "").lower() and "studio" not in (path or "").lower():
@@ -2087,7 +2144,7 @@ async def main():
             log(f"      netstat -ano | findstr {PORT}", "yl")
             log(f"      taskkill /F /PID <the pid from the last column>", "yl")
             log(f"    Or set a different port before start.bat:  set ZS_BRIDGE_PORT=17614", "yl")
-            return
+            raise SystemExit(1)
         raise
 
     async with server_ctx:

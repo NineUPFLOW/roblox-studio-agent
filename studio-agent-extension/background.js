@@ -62,15 +62,20 @@ function connect() {
     return;
   }
   clearTimeout(reconnectTimer);
+  let sock;
   try {
-    ws = new WebSocket(URL);
+    sock = ws = new WebSocket(URL);
   } catch (e) {
     log("WebSocket ctor failed", e);
     scheduleReconnect();
     return;
   }
 
-  ws.onopen = () => {
+  // Every handler ignores events from a superseded socket: a stale socket closed
+  // by the heartbeat finishes closing AFTER a new one may already be live, and its
+  // onclose must not wipe state / fail the new socket's pending calls.
+  sock.onopen = () => {
+    if (sock !== ws) return;
     connected = true;
     reconnectDelay = RECONNECT_MIN;
     lastMessageAt = Date.now();
@@ -79,7 +84,8 @@ function connect() {
     broadcastStatus();
   };
 
-  ws.onmessage = (ev) => {
+  sock.onmessage = (ev) => {
+    if (sock !== ws) return;
     lastMessageAt = Date.now();
     let msg;
     try {
@@ -90,7 +96,8 @@ function connect() {
     handleBridgeMessage(msg);
   };
 
-  ws.onclose = () => {
+  sock.onclose = () => {
+    if (sock !== ws) return;
     connected = false;
     mcpAlive = false;
     studioConnected = null;
@@ -103,9 +110,9 @@ function connect() {
     scheduleReconnect();
   };
 
-  ws.onerror = () => {
+  sock.onerror = () => {
     // onclose will follow; nothing to do here but avoid an unhandled error.
-    try { ws.close(); } catch {}
+    try { sock.close(); } catch {}
   };
 }
 

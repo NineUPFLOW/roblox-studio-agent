@@ -43,11 +43,12 @@ const ZSParse = (() => {
   // renders as `###lua### Copy <code>`, so the bare-marker slice below would
   // capture `Copy task.wait(...)` as the Lua code - not valid Lua, so StudioMCP
   // rejects it with "Failed to parse command code". The JSON path already does
-  // this at line ~206; mirror it for the raw ###LUA### extraction. Requires
-  // trailing whitespace (\s+) so it never eats a legitimate identifier like
-  // `Copy(x)` that a script might genuinely start with.
+  // this at line ~206; mirror it for the raw ###LUA### extraction.
+  // Only a label on its own line, or Kimi's inline capitalised `Copy ` caption, is
+  // stripped - never a Lua identifier: `copy = x:Clone()`, `json = Http:JSONDecode(s)`,
+  // `Copy(x)`, `Copy.x`, `Copy = 1` all survive.
   function stripCodeChrome(code) {
-    return code.replace(/^(?:json|copy)\s+/i, "");
+    return code.replace(/^(?:json|copy)[ \t]*\r?\n/i, "").replace(/^Copy[ \t]+(?![=.:(\[,\s])/, "");
   }
 
   // A command is `{"command":"name", ...}` (or "tool"). The params/arguments
@@ -103,10 +104,11 @@ const ZSParse = (() => {
     // is still being streamed (a big multi_edit can take many seconds). Treat it as
     // open so the watcher keeps waiting instead of finalizing - and failing to parse -
     // half a command, which would drop the tool and end the turn as plain text.
-    for (const key of ['"command"', '"tool"']) {
-      const k = r.indexOf(key);
-      if (k === -1) continue;
-      const open = r.lastIndexOf("{", k);
+    // Check EVERY command key, not just the first: an earlier closed command (or a
+    // prose mention) must not hide a later one that is still streaming.
+    const keyRe = new RegExp(CMD_KEY_RE.source, "g");
+    for (let m; (m = keyRe.exec(r)); ) {
+      const open = r.lastIndexOf("{", m.index);
       if (open !== -1 && matchBrace(r, open) === -1) return true;
     }
     return false;
@@ -189,21 +191,19 @@ const ZSParse = (() => {
   }
 
   function extractToolAnywhere(text) {
-    for (const key of ['"command"', '"tool"']) {
-      let pos = 0;
-      while (true) {
-        const s = text.indexOf(key, pos);
-        if (s === -1) break;
-        const start = text.lastIndexOf("{", s);
-        if (start === -1) { pos = s + 1; continue; }
-        const end = matchBrace(text, start); // string-aware brace matching
-        if (end === -1) { pos = s + 1; continue; }
-        try {
-          const call = normalizeCall(parseLoose(text.slice(start, end + 1)));
-          if (call) return call;
-        } catch {}
-        pos = s + 1;
-      }
+    // Scan both keys in TEXT order, so the outer object wins: in the legacy
+    // `{"tool":"X","arguments":{"command":"insert"}}` the inner "command" is an
+    // argument of X, not a tool to run.
+    const keyRe = /"(?:command|tool)"/g;
+    for (let m; (m = keyRe.exec(text)); ) {
+      const start = text.lastIndexOf("{", m.index);
+      if (start === -1) continue;
+      const end = matchBrace(text, start); // string-aware brace matching
+      if (end === -1) continue;
+      try {
+        const call = normalizeCall(parseLoose(text.slice(start, end + 1)));
+        if (call) return call;
+      } catch {}
     }
     return null;
   }
