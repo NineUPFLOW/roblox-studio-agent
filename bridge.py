@@ -74,7 +74,7 @@ def _enable_ansi_colors():
 HOST = "127.0.0.1"
 # Keep in sync with studio-agent-extension/manifest.json "version" - printed at
 # startup so a user's terminal output alone tells us which build they're on.
-BRIDGE_VERSION = "1.7.0"
+BRIDGE_VERSION = "1.7.1"
 PORT = int(os.environ.get("ZS_BRIDGE_PORT", "17613"))
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -1359,14 +1359,51 @@ def origin_blocked(origin_value):
     return not origin_value.startswith(WS_ALLOWED_ORIGIN_PREFIXES)
 
 
-async def reject_web_page_origins(connection, request):
-    """process_request hook: refuse the handshake before any handler runs."""
-    origin = request.headers.get("Origin")
-    if origin_blocked(origin):
-        log(f"REFUSED websocket - web page origin {str(origin)[:100]!r}; "
-            f"only extension origins may connect", "rd")
-        return connection.respond(403, "forbidden origin")
-    return None
+async def reject_web_page_origins(*args):
+    """process_request hook: refuse the handshake before any handler runs.
+
+    Must work with BOTH websockets server generations, because start.bat only
+    pip-installs when the library is missing entirely - machines that already
+    have a pre-14 install get the LEGACY server, and pinning/upgrading there
+    would break unrelated user tooling:
+      * new asyncio API (>=13, default from 14):  process_request(connection, request)
+        -> reject via `connection.respond(status, reason)`
+      * legacy API (<=13 default):                process_request(path, request_headers)
+        -> reject via `(http.HTTPStatus.FORBIDDEN, headers, body)`
+    The two are told apart by the first argument's type (path is a str).
+    On any unexpected hook error the connection is ALLOWED and a loud warning
+    is logged: a guard that misfires on an exotic websockets build must never
+    lock the user's own extension out of their own bridge (the product died
+    exactly this way in 1.7.0). Security still holds because the pre-guard
+    baseline was "no origin check"; the loud line tells the user to update."""
+    try:
+        if args and isinstance(args[0], str):  # legacy: (path, request_headers)
+            headers = args[1] if len(args) > 1 else None
+            origin = headers.get("Origin") if headers is not None else None
+            if origin_blocked(origin):
+                log(f"REFUSED websocket - web page origin {str(origin)[:100]!r}; "
+                    f"only extension origins may connect", "rd")
+                import http
+                return http.HTTPStatus.FORBIDDEN, [(b"Content-Type", b"text/plain")], b"forbidden origin\n"
+            return None
+        connection, request = args  # new asyncio API: (connection, request)
+        origin = request.headers.get("Origin")
+        if origin_blocked(origin):
+            log(f"REFUSED websocket - web page origin {str(origin)[:100]!r}; "
+                f"only extension origins may connect", "rd")
+            return connection.respond(403, "forbidden origin")
+        return None
+    except Exception as e:
+        log(f"origin guard error ({type(e).__name__}: {e}) - allowing this "
+            f"connection to keep the extension working; update the bridge "
+            f"or run:  pip install -U websockets", "yl")
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "bridge_debug.log"), "a", encoding="utf-8") as _f:
+                import traceback as _tb
+                _f.write("\n===== ORIGIN GUARD HOOK ERROR =====\n" + _tb.format_exc() + "\n")
+        except Exception:
+            pass
+        return None
 
 
 async def handler(ws):

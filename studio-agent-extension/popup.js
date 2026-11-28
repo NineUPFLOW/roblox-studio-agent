@@ -32,7 +32,9 @@ function render(s) {
 }
 
 function refresh() {
-  chrome.runtime.sendMessage({ type: "status" }, (s) => s && render(s));
+  // lastError must be touched or Chrome logs an uncaught "Receiving end does
+  // not exist" when the service worker is mid-restart (after an extension update).
+  chrome.runtime.sendMessage({ type: "status" }, (s) => { void chrome.runtime.lastError; if (s) render(s); });
 }
 
 document.getElementById("reconnect").addEventListener("click", () => {
@@ -53,7 +55,12 @@ document.getElementById("settings").addEventListener("click", () => {
     const active = tabs.find((t) => t.active && t.url && SUPPORTED_HOSTS.some((h) => t.url.includes(h)));
     const anySupported = active || tabs.find((t) => t.url && SUPPORTED_HOSTS.some((h) => t.url.includes(h)));
     if (anySupported) {
-      chrome.tabs.sendMessage(anySupported.id, { type: "zs-open-menu" });
+      // The tab may simply have no content script (unsupported URL left open,
+      // page predates an extension reload). Without a catch that rejects the
+      // promise with "Receiving end does not exist" (the exact popup error users
+      // saw on 1.7.0). Fall back to opening a fresh supported tab instead.
+      const ping = chrome.tabs.sendMessage(anySupported.id, { type: "zs-open-menu" });
+      if (ping && ping.catch) ping.catch(() => chrome.tabs.create({ url: DEFAULT_AI_URL }));
       chrome.tabs.update(anySupported.id, { active: true });
     } else {
       chrome.tabs.create({ url: DEFAULT_AI_URL });

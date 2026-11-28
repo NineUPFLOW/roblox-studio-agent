@@ -43,5 +43,50 @@ if not re.search(r"process_request\s*=\s*reject_web_page_origins", src):
 else:
     print("ok   serve(... process_request=reject_web_page_origins)")
 
+# ---- dual-API call conventions (1.7.0 regression: legacy websockets passes
+# (path, request_headers), NOT (connection, request); a hook that only speaks
+# the new API crashed EVERY handshake, locking even the extension out) ----
+import asyncio
+import http
+
+
+async def both_apis():
+    out = []
+    # legacy: path is a str, headers is a plain mapping
+    r = await bridge.reject_web_page_origins("/", {"Origin": "https://evil.example"})
+    out.append(("legacy evil -> 403 tuple", isinstance(r, tuple) and r[0] == http.HTTPStatus.FORBIDDEN))
+    r = await bridge.reject_web_page_origins("/", {})
+    out.append(("legacy no-origin -> proceed", r is None))
+    r = await bridge.reject_web_page_origins("/", {"Origin": "chrome-extension://abc"})
+    out.append(("legacy extension -> proceed", r is None))
+
+    class Conn:
+        def __init__(self): self.responded = None
+        # REAL API: respond() is synchronous (sends the response, closes the
+        # socket); the hook returns its result unawaited - mirror that here.
+        def respond(self, status, reason):
+            self.responded = (status, reason)
+            return None
+    class Req:
+        def __init__(self, h): self.headers = h
+    c = Conn()
+    r = await bridge.reject_web_page_origins(c, Req({"Origin": "https://evil.example"}))
+    out.append(("new evil -> respond(403)", c.responded == (403, "forbidden origin")))
+    c2 = Conn()
+    r = await bridge.reject_web_page_origins(c2, Req({"Origin": "moz-extension://u"}))
+    out.append(("new extension -> proceed", r is None and c2.responded is None))
+
+    # garbage call style must FAIL OPEN (1.7.0 lesson), not wedge the bridge
+    r = await bridge.reject_web_page_origins(123, None)
+    out.append(("garbage args -> fail open", r is None))
+    return out
+
+for name, ok in asyncio.run(both_apis()):
+    if not ok:
+        fails += 1
+        print(f"FAIL {name}")
+    else:
+        print(f"ok   {name}")
+
 print("PASS  bridge origin guard" if not fails else f"FAIL  {fails} case(s)")
 sys.exit(1 if fails else 0)

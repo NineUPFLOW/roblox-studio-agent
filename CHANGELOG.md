@@ -2,6 +2,24 @@
 
 All notable changes to Studio Agent are documented here.
 
+## [1.7.1] - 2026-11-28
+
+### Fixed (regression from 1.7.0 - update required if the bridge stopped accepting the extension)
+- **Bridge origin guard crashed on legacy websockets (<14).** `start.bat` only
+  installs the library when it is missing, so machines with a pre-14 install ran
+  the LEGACY server, whose `process_request(path, request_headers)` signature
+  the 1.7.0 hook did not speak - every handshake raised `AttributeError`,
+  including the extension's own. The hook now auto-detects both calling
+  conventions, rejects web pages identically on both, and FAILS OPEN with a
+  loud warning on any unexpected hook error so the guard can never lock the
+  user out of their own bridge again. Regression test covers legacy/new/garbage
+  call shapes (16 checks).
+- **Popup "Settings" threw `Uncaught (in promise) Could not establish
+  connection. Receiving end does not exist.`** when the active supported tab
+  had no live content script (page older than the last extension reload).
+  It now opens a fresh chat tab instead; the status poll also silences the
+  transient no-listener error while the service worker restarts after an update.
+
 ## [1.7.0] - 2026-11-28
 
 Upstream-parity release: reliability fixes verified against the reference
