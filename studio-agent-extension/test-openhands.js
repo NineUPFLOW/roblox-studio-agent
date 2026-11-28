@@ -178,7 +178,13 @@ function el(tag, opts, children) {
       return c;
     },
     focus: () => { node.focused = true; },
-    click: () => { node.clicks = (node.clicks || 0) + 1; if (node.onclick) node.onclick({ target: node }); },
+    click: () => {
+      node.clicks = (node.clicks || 0) + 1;
+      // browser-faithful: programmatic .click() DOES reach document-level listeners,
+      // but the event is UNTRUSTED - exactly the distinction our click spies key on.
+      const ev = new global.Event("click", { bubbles: true, cancelable: true });
+      node.dispatchEvent(ev);
+    },
     dispatchEvent: (ev) => {
       ev.target = ev.target || node;
       let n = node, dispatched = ev;
@@ -623,8 +629,15 @@ const TEXT = 'result\n```json\n' + fenced + "\n```\nkeep going";
   eq(stopBtn, null, "no stop button while idle");
   const p4 = makePage({ rows: [], stop: true });
   P.installSendHooks(handlers);
-  p4.send.parentElement.querySelector('[data-testid="stop-button"]').dispatchEvent(new global.Event("click", { bubbles: true, cancelable: true }));
+  const stopUserEv = new global.Event("click", { bubbles: true, cancelable: true });
+  Object.defineProperty(stopUserEv, "isTrusted", { get: () => true }); // a real user click is trusted
+  p4.send.parentElement.querySelector('[data-testid="stop-button"]').dispatchEvent(stopUserEv);
   eq(calls.join(","), "stop", "the site's own stop click is treated as a manual stop");
+  calls = [];
+  // regression (1.7.0 isTrusted guard): the provider's OWN synthetic .click()
+  // (e.g. unwedge/clickStop) must NOT be misread as user intent to stop.
+  p4.send.parentElement.querySelector('[data-testid="stop-button"]').click();
+  eq(calls.join(","), "", "synthetic (untrusted) stop click is ignored by the user-intent spy");
 
   // ── 10. attachments (the screen_capture path) ─────────────────────────────
   console.log("\nattachments");

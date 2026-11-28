@@ -722,6 +722,7 @@ const ZSProvider = (() => {
     document.addEventListener(
       "click",
       (e) => {
+        if (!e.isTrusted) return; // user-intent spy: our own programmatic .click() calls must not read as user actions
         const t = e && e.target;
         if (!t || !t.closest) return;
         // The site's own stop = a deliberate manual stop.

@@ -53,7 +53,7 @@ const ZSProvider = (() => {
       "i"
     ),
     tooLong: /conversation .{0,20}(too long|getting too long|trop longue)/i,
-    busy: /something went wrong|une erreur s.est produite|try again later|réessayer plus tard|temporarily unavailable/i,
+    busy: /something went wrong|une erreur s.est produite|try again later|réessayer plus tard|temporarily unavailable|i encountered an error (doing )?what you asked|could you try again\?/i,
   };
 
   // Gemini streams continuously with a hard stop-icon signal for the WHOLE
@@ -582,6 +582,7 @@ const ZSProvider = (() => {
     document.addEventListener(
       "click",
       (e) => {
+        if (!e.isTrusted) return; // user-intent spy: our own programmatic .click() calls must not read as user actions
         if (!getEditor()) return;
         const btn = e.target && e.target.closest && e.target.closest(`${S.inputArea} button`);
         if (!btn) return;

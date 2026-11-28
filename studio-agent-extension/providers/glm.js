@@ -489,6 +489,7 @@ const ZSProvider = (() => {
     document.addEventListener(
       "click",
       (e) => {
+        if (!e.isTrusted) return; // user-intent spy: our own programmatic .click() calls must not read as user actions
         if (!getEditor()) return;
         const t = e.target;
         // Stop button (round, in the composer) = a native stop intent.

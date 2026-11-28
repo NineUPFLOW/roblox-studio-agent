@@ -74,7 +74,7 @@ def _enable_ansi_colors():
 HOST = "127.0.0.1"
 # Keep in sync with studio-agent-extension/manifest.json "version" - printed at
 # startup so a user's terminal output alone tells us which build they're on.
-BRIDGE_VERSION = "1.6.5"
+BRIDGE_VERSION = "1.7.0"
 PORT = int(os.environ.get("ZS_BRIDGE_PORT", "17613"))
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -1338,6 +1338,37 @@ async def broadcast_status():
             pass
 
 
+WS_ALLOWED_ORIGIN_PREFIXES = ("chrome-extension://", "moz-extension://")
+
+
+def origin_blocked(origin_value):
+    """True when a browser Origin header is present but is NOT an extension.
+
+    The bridge serves full Roblox Studio control on ws://127.0.0.1 with no
+    auth, and WebSocket handshakes are NOT covered by CORS - while this
+    window is open, ANY web page the user visits could connect to localhost
+    and steer Studio (cross-site WebSocket hijacking). The only legitimate
+    browser client is the extension's background service worker, whose
+    handshakes carry an ``chrome-extension://``/``moz-extension://`` Origin;
+    pages send their own origin (or ``null`` for file://-like contexts) and
+    are refused. Non-browser clients send no Origin at all and stay allowed
+    (local processes already have local access; this guard defends the
+    network-less attack surface that needs no privileges)."""
+    if not origin_value:
+        return False
+    return not origin_value.startswith(WS_ALLOWED_ORIGIN_PREFIXES)
+
+
+async def reject_web_page_origins(connection, request):
+    """process_request hook: refuse the handshake before any handler runs."""
+    origin = request.headers.get("Origin")
+    if origin_blocked(origin):
+        log(f"REFUSED websocket - web page origin {str(origin)[:100]!r}; "
+            f"only extension origins may connect", "rd")
+        return connection.respond(403, "forbidden origin")
+    return None
+
+
 async def handler(ws):
     peer = getattr(ws, "remote_address", ("?",))[0]
     clients.add(ws)
@@ -2005,7 +2036,8 @@ async def main():
     try:
         server_ctx = await websockets.serve(
             handler, HOST, PORT, ping_interval=20, ping_timeout=20,
-            max_size=16 * 1024 * 1024)
+            max_size=16 * 1024 * 1024,
+            process_request=reject_web_page_origins)
     except OSError as e:
         # errno 10048 (Win) / EADDRINUSE: something we could NOT auto-kill still
         # owns the port - another app, or a python whose cmdline we couldn't read.

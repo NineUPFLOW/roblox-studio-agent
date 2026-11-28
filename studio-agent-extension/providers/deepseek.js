@@ -860,6 +860,7 @@ const ZSProvider = (() => {
     document.addEventListener(
       "click",
       (e) => {
+        if (!e.isTrusted) return; // user-intent spy: our own programmatic .click() calls must not read as user actions
         // Not on a chat page (e.g. login / OAuth page) - never intercept anything.
         if (!getEditor()) return;
         const t = e.target;

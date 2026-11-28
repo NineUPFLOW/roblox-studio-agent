@@ -2,4 +2,7 @@
 # macOS/Linux with "$'\r': command not found". The repo is developed on
 # Windows (autocrlf), so pin these explicitly.
 *.command text eol=lf
+# Windows cmd.exe expects CRLF batch files; LF works in modern builds but
+# breaks `choice` prompts and old cmd goto-scanning. Pin the opposite way for .bat.
+*.bat       text eol=crlf
 *.sh       text eol=lf

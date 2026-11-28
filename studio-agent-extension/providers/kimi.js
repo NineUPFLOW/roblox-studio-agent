@@ -686,6 +686,7 @@ const ZSProvider = (() => {
     document.addEventListener(
       "click",
       (e) => {
+        if (!e.isTrusted) return; // user-intent spy: our own programmatic .click() calls must not read as user actions
         if (!getEditor()) return;
         const ctrl = e.target && e.target.closest && e.target.closest(S.sendBtn);
         if (!ctrl) return;

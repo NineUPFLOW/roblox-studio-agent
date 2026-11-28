@@ -2,6 +2,44 @@
 
 All notable changes to Studio Agent are documented here.
 
+## [1.7.0] - 2026-11-28
+
+Upstream-parity release: reliability fixes verified against the reference
+project's changelog were re-implemented for this codebase (no code was copied
+verbatim), plus one security hardening that neither build had.
+
+### Security
+- **Bridge: cross-site WebSocket hijacking closed.** The bridge serves full
+  Studio control on ws://127.0.0.1:17613 without auth, and WebSocket
+  handshakes bypass CORS - previously ANY web page open in the browser could
+  connect while the bridge window was live. The handshake is now refused (403)
+  for browser Origins that are not extension origins
+  (`chrome-extension://`/`moz-extension://`); local non-browser clients keep
+  working. `test-bridge-security.py` guards the rule and the wiring.
+
+### Fixed (upstream parity)
+- **ChatGPT/arena/DeepSeek/Gemini/Kimi/GLM/Meta/OpenHands: a self-click no
+  longer stops the session.** Providers programmatically `.click()` buttons
+  (unwedge a wedged stop, submit, dismiss chips); the document-level
+  user-intent click spy treated that synthetic click as the user pressing
+  Stop / Continue. The spies now ignore untrusted events.
+- **`startSession` no longer locks a cold-start composer before injecting the
+  prompt** (the lock is applied after the prompt dispatches; the "Working..."
+  cover already blocks clicks in the gap), and **a bootstrap that ends empty,
+  timed out, context-limited, too long, or with a transient busy notice no
+  longer reports "Agent ready"** - it shows a Startup-did-not-complete banner
+  and leaves Start available.
+- **All injected buttons get `type="button"`** (+ preventDefault/
+  stopPropagation on Start/Stop) so a host `<form>` cannot hijack the click
+  as a submit.
+- **`resetDecoration` clears `.zs-cmd-mask-all`** - ChatGPT's unfenced-block
+  mask survived recycled turn nodes and could leave an unrelated reply hidden.
+- **Gemini: server-hiccup phrasing ("I encountered an error doing what you
+  asked. Could you try again?") is now recognized as a transient busy error**
+  instead of a dead end.
+- **Windows: `*.bat` now checks out CRLF** (`.gitattributes`), matching what
+  cmd.exe expects for batch files.
+
 ## [1.6.5] - 2026-11-28
 
 ### Fixed

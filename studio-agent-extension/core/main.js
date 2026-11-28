@@ -1839,7 +1839,6 @@
     A.toolCallsSinceReminder = 0; // fresh reminder cadence for the new session
     ui.setStarting(true);
     ui.updateStartGate(); // refresh the bar into its "starting" state
-    P.setInputLock(true); // block user input during bootstrap
     ui.inputCover(true);  // cover the composer ("Working…") for the WHOLE Starting Up
     try {
       await ensureTools(true); // boot: always take a fresh catalogue (the TTL then
@@ -1860,6 +1859,9 @@
       }
       const prompt = systemPrompt();
       const base = await submitAndGetBase(prompt);
+      P.setInputLock(true); // lock AFTER the prompt dispatched: locking a cold-start
+                            // contenteditable composer before injection can wedge it
+                            // (the cover already blocks clicks during the gap).
       if (!alive()) return;
       // (syncSessionState pins A.startingKey to the conversation id once the chat
       // has content, and aborts this bootstrap if the user opens a new empty chat.)
@@ -1869,6 +1871,22 @@
       // The user halted the bootstrap (our Stop or the site's native stop). Do
       // NOT declare the session ready - abort quietly so "Start" stays available.
       if (A.stop || startRes.kind === "stopped") { diag("start.aborted", { kind: startRes.kind }); return; }
+
+      // A bootstrap that produced NO usable first reply is a FAILED start - do
+      // not mark the session ready on top of it (upstream 1.9.1 fix): empty /
+      // timeout / context_limit / a transient busy notice all mean the agent is
+      // NOT active, and the old code toasted "Agent ready" regardless.
+      const deadStart = startRes.kind === "empty" || startRes.kind === "timeout" ||
+        startRes.kind === "context_limit" || startRes.kind === "too_long" ||
+        (startRes.kind === "text" && P.isBusyMsg && P.isBusyMsg(startRes.text || ""));
+      if (deadStart) {
+        diag("start.deadBootstrap", { kind: startRes.kind });
+        ui.banner("warn", "Startup did not complete",
+          startRes.kind === "context_limit"
+            ? `${P.displayName} refused this chat for the agent (context limit here). Open a new chat and press Start again.`
+            : `${P.displayName} did not answer the startup prompt (${startRes.kind}). Reload this page or open a new chat, then press Start again.`);
+        return;
+      }
 
       // If the model calls list_commands as instructed, run it and wait for the "ready" reply.
       const firstName = startRes.calls && startRes.calls[0] && startRes.calls[0].tool;
@@ -1964,6 +1982,7 @@
     item.classList.remove("zs-hidden");
     item.querySelectorAll(".zs-tool-hide").forEach((e) => e.classList.remove("zs-tool-hide"));
     item.querySelectorAll(".zs-cmd-mask").forEach((e) => e.classList.remove("zs-cmd-mask"));
+    item.querySelectorAll(".zs-cmd-mask-all").forEach((e) => e.classList.remove("zs-cmd-mask-all"));
     delete item.dataset.zs;
     delete item.dataset.zsig;
     delete item.dataset.zphase;
@@ -2586,13 +2605,13 @@
           <span id="zs-dot" class="off" title=""></span>
           <span id="zs-brand">Studio Agent <span class="zs-free">v${EXT_VERSION}</span></span>
           <span id="zs-state"></span>
-          <button id="zs-action"></button>
-          <button id="zs-stop" hidden>■ Stop</button>
-          <button id="zs-switch" aria-label="Switch AI and options" title="Switch AI, custom prompt, support"><span id="zs-switch-name"></span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
-          <button id="zs-support" aria-label="More options" title="More options"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
+          <button type="button" id="zs-action"></button>
+          <button type="button" id="zs-stop" hidden>■ Stop</button>
+          <button type="button" id="zs-switch" aria-label="Switch AI and options" title="Switch AI, custom prompt, support"><span id="zs-switch-name"></span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" id="zs-support" aria-label="More options" title="More options"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
         </div>
         <div id="zs-menu" hidden></div>
-        ${P.unstableWarning ? `<button id="zs-unstable" aria-label="Provider may be unstable" hidden>⚠ unstable</button>` : ""}
+        ${P.unstableWarning ? `<button type="button" id="zs-unstable" aria-label="Provider may be unstable" hidden>⚠ unstable</button>` : ""}
       `;
       document.documentElement.appendChild(root);
       bar = root.querySelector("#zs-bar");
@@ -2612,8 +2631,8 @@
       // nested centered column, so whole-turn chips (result/sys) need re-centering.
       document.documentElement.classList.add(`zs-site-${P.id}`);
 
-      actionBtn.addEventListener("click", onActionClick);
-      stopBtn.addEventListener("click", stopLoop);
+      actionBtn.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); onActionClick(ev); });
+      stopBtn.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); stopLoop(ev); });
       unstableEl = root.querySelector("#zs-unstable");
       if (unstableEl) {
         // Set the native tooltip via PROPERTY, not the HTML template: the warning
@@ -2787,7 +2806,7 @@
         const label = `<span class="zs-site-name"><span>${s.name}</span><span class="zs-site-host">${hostOf(s.url)}</span></span>`;
         sites += current
           ? `<div class="zs-site-opt zs-site-here">${label}<span class="zs-site-badge">active</span></div>`
-          : `<button class="zs-site-opt" data-u="${s.url}">${label}<span class="zs-site-go">&rarr;</span></button>`;
+          : `<button type="button" class="zs-site-opt" data-u="${s.url}">${label}<span class="zs-site-go">&rarr;</span></button>`;
       }
       const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
       const mergedServers = mergedMcpServers();
@@ -2801,7 +2820,7 @@
         // yet (just added/removed, still restarting) - shown neutral, not red.
         const healthClass = s.alive === true ? "on" : s.alive === false ? "off" : "unknown";
         const healthTitle = s.alive === true ? `${s.tools || 0} tools available` : s.alive === false ? "offline" : "status unknown";
-        mcpList += `<div class="zs-mcp-item"><span class="zs-mcp-health zs-mcp-health-${healthClass}" title="${healthTitle}"></span><div class="zs-mcp-info"><span class="zs-mcp-name">${esc(s.name)}</span><span class="zs-mcp-url">${esc(s.command || s.id)}</span></div><button class="zs-mcp-remove" data-id="${esc(s.id)}" title="Remove">✕</button></div>`;
+        mcpList += `<div class="zs-mcp-item"><span class="zs-mcp-health zs-mcp-health-${healthClass}" title="${healthTitle}"></span><div class="zs-mcp-info"><span class="zs-mcp-name">${esc(s.name)}</span><span class="zs-mcp-url">${esc(s.command || s.id)}</span></div><button type="button" class="zs-mcp-remove" data-id="${esc(s.id)}" title="Remove">✕</button></div>`;
       });
       menuEl.innerHTML =
         `<div class="zs-menu-head"><span class="zs-menu-logo">Studio Agent</span><span class="zs-menu-tag">v${EXT_VERSION}</span></div>
@@ -2813,7 +2832,7 @@
            <div class="zs-sec-label"><span>Custom prompt</span></div>
            <div class="zs-menu-note">Added below the system prompt on every new session. The built-in prompt can't be edited.</div>
            <textarea id="zs-set-text" rows="4" placeholder="e.g. Always comment your Luau code. Prefer small modular scripts."></textarea>
-           <div class="zs-set-row"><button id="zs-set-save">Save</button><span id="zs-set-status"></span></div>
+           <div class="zs-set-row"><button type="button" id="zs-set-save">Save</button><span id="zs-set-status"></span></div>
          </section>
          <section class="zs-menu-sec">
            <div class="zs-sec-label"><span>MCP servers</span></div>
@@ -2822,7 +2841,7 @@
            <div class="zs-mcp-sep"></div>
            <input id="zs-mcp-name" class="zs-mcp-field" placeholder="Name, e.g. Blender" />
            <input id="zs-mcp-url" class="zs-mcp-field" placeholder="Start command, e.g. npx -y @some/mcp-server" />
-           <div class="zs-set-row"><button id="zs-mcp-add">Add server</button><span id="zs-mcp-status"></span></div>
+           <div class="zs-set-row"><button type="button" id="zs-mcp-add">Add server</button><span id="zs-mcp-status"></span></div>
          </section>`;
       const open = (url) => { try { window.open(url, "_blank", "noopener"); } catch {} menuEl.hidden = true; };
       menuEl.querySelectorAll("button.zs-site-opt").forEach((b) =>
@@ -2919,7 +2938,7 @@
           `<li>Run <code>start.bat</code> (Windows) or <code>MacOS_Start.command</code> (macOS) - a small window opens</li>` +
           `<li>Back here, click <b>Start Roblox agent</b></li>` +
         `</ol>` +
-        `<button id="zs-setup-dismiss">Got it</button>`;
+        `<button type="button" id="zs-setup-dismiss">Got it</button>`;
       document.documentElement.appendChild(setupCard);
 
       setupCard.querySelector("#zs-setup-dismiss").addEventListener("click", () => {
@@ -3236,7 +3255,7 @@
       b.className = "zs-banner limit zs-stale";
       b.innerHTML = `<div class="zs-banner-t">⚠ Reload this page to reconnect Studio Agent</div>
         <div class="zs-banner-m">Studio Agent was updated or reloaded while this tab was open, so this page is still running the old copy and commands can no longer run. Your bridge and Roblox Studio are fine - only this page needs refreshing.</div>
-        <div class="zs-banner-acts"><button class="zs-banner-reload">Reload page</button></div>`;
+        <div class="zs-banner-acts"><button type="button" class="zs-banner-reload">Reload page</button></div>`;
       b.querySelector(".zs-banner-reload").addEventListener("click", () => location.reload());
       root.appendChild(b);
       bridgeBannerEl = b;
@@ -3255,7 +3274,7 @@
       // can never overlap the alert - the previous standalone onboarding card did.
       b.innerHTML = `<div class="zs-banner-t">⚠ Lost connection to Studio Agent</div>
         <div class="zs-banner-m">The Studio Agent bridge stopped on your PC. Restart it (run start.bat and keep Roblox Studio open): the agent will reconnect automatically as soon as it is detected again.</div>
-        <div class="zs-banner-acts"><button class="zs-banner-x">Close</button></div>`;
+        <div class="zs-banner-acts"><button type="button" class="zs-banner-x">Close</button></div>`;
       b.querySelector(".zs-banner-x").addEventListener("click", () => { b.remove(); if (bridgeBannerEl === b) bridgeBannerEl = null; });
       root.appendChild(b);
       bridgeBannerEl = b;
@@ -3740,7 +3759,7 @@
       b.className = `zs-banner ${kind}`;
       b.innerHTML = `<div class="zs-banner-t"></div><div class="zs-banner-m"></div>
         <div class="zs-banner-acts">
-          <button class="zs-banner-x">Close</button>
+          <button type="button" class="zs-banner-x">Close</button>
         </div>`;
       b.querySelector(".zs-banner-t").textContent = title;
       b.querySelector(".zs-banner-m").textContent = msg;
@@ -3761,7 +3780,7 @@
       const ttl = document.createElement("span");
       ttl.className = "zs-shot-ttl";
       ttl.textContent = `${toolName} · ${images.length} image${images.length > 1 ? "s" : ""}`;
-      const close = document.createElement("button");
+      const close = document.createElement("button"); close.type = "button";
       close.className = "zs-shot-x";
       close.textContent = "✕";
       close.addEventListener("click", () => wrap.remove());
