@@ -1979,21 +1979,27 @@
   // container), the blanket `.zs-hidden` rule blanks the whole conversation -
   // reported live on OpenHands Canvas as "the chat disappeared / black screen"
   // minutes after a send. Rather than ship a dead-looking page, trip a fuse:
-  // when at least HALF of all turns are hidden by our classes (and there are 4+
-  // turns), strip every trace of camouflage for this page load and say so. Raw
+  // when 85%+ of all turns are hidden by our whole-bubble class (and there are
+  // 6+ turns), strip every trace of camouflage for this page load and say so. Raw
   // injected turns become visible - cosmetic, recoverable, and far cheaper than
   // a chat that looks destroyed.
   let camoFused = false;
   function camoFuse() {
     if (camoFused) return;
     try {
+      // Only .zs-hidden (whole-bubble hides) counts: .zs-cmd-mask on the agent's
+      // command turns is normal camouflage and must not weigh in. And only count
+      // OUR OWN hidden turns when the page is big enough for the ratio to mean
+      // something - at a fresh-session peak the whole chat IS our two injected
+      // user turns plus one masked command turn (3 of 4), and a 50%-based trip
+      // fired on every bootstrap (observed live: camo.fused {hidden:3,total:4}).
+      // Pathological container-hiding, by contrast, hides ~everything including
+      // the user's plain turns, so: 6+ turns AND 85%+ hidden.
       const items = P.allItems();
-      if (items.length < 4) return;
+      if (items.length < 6) return;
       let hidden = 0;
-      for (const it of items) {
-        if (it.classList.contains("zs-hidden") || it.classList.contains("zs-cmd-mask")) hidden++;
-      }
-      if (hidden * 2 < items.length) return;
+      for (const it of items) if (it.classList.contains("zs-hidden")) hidden++;
+      if (hidden * 100 < items.length * 85) return;
       camoFused = true;
       for (const it of items) resetDecoration(it);
       diag("camo.fused", { hidden, total: items.length });

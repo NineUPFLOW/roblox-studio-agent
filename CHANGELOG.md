@@ -2,6 +2,16 @@
 
 All notable changes to Studio Agent are documented here.
 
+## [1.6.5] - 2026-11-28
+
+### Fixed
+- **Camouflage fuse no longer trips on a fresh session.** The bootstrap state
+  (two injected user turns + one masked command turn = 3 of 4 items hidden) is
+  completely normal, and the 1.6.4 50% threshold fired on every new OpenHands
+  chat, pointlessly stripping all camouflage (`camo.fused {hidden:3,total:4}`).
+  The fuse now counts only whole-bubble hides and trips at 85%+ of 6+ turns -
+  a ratio only a runaway container-hide can reach.
+
 ## [1.6.4] - 2026-11-28
 
 ### Added
